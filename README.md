@@ -10,8 +10,8 @@ Built with **Tauri 2 + React + TypeScript**.
 - **Repos** — branch, dirty state, ahead/behind, last commit; enable/disable
 - **Fetch all / Pull all / Push all** — batch ops on enabled repos
   (`fetch --all --prune`, `pull --ff-only`, `push` with auto `-u origin` if needed)
-- **Per-repo actions** — Fetch / Pull / Push / **Commit** (file pick + stage) /
-  **History** / **Folder**
+- **Per-repo actions** — Fetch / Pull / Push / **Stage** (stage/unstage/commit + **diff**) /
+  **History** (detach / branch here) / **Branches** (create/delete) / **Folder**
 - **Single-repo branch switch** — checkout a local (or origin/) branch
 - **Environments** — e.g. `development`, `staging` with per-repo target branches
 - **Environment switcher** — live **dry-run preview** plus bulk checkout with

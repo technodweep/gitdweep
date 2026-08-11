@@ -291,10 +291,41 @@ pub fn stage_paths(path: &str, paths: &[String]) -> Result<(), String> {
     if paths.is_empty() {
         return Err("No files selected".into());
     }
+    // Stages new/modified/deleted for each pathspec
     let mut args = vec!["add".to_string(), "--".to_string()];
     args.extend(paths.iter().cloned());
     let args_ref: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
     run_git(p, &args_ref)?;
+    Ok(())
+}
+
+/// Unstage paths (keep working tree). Uses `git restore --staged`.
+pub fn unstage_paths(path: &str, paths: &[String]) -> Result<(), String> {
+    let p = Path::new(path);
+    if paths.is_empty() {
+        return Err("No files selected".into());
+    }
+    let mut args = vec![
+        "restore".to_string(),
+        "--staged".to_string(),
+        "--".to_string(),
+    ];
+    args.extend(paths.iter().cloned());
+    let args_ref: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+    run_git(p, &args_ref)?;
+    Ok(())
+}
+
+pub fn stage_all(path: &str) -> Result<(), String> {
+    let p = Path::new(path);
+    run_git(p, &["add", "-A"])?;
+    Ok(())
+}
+
+pub fn unstage_all(path: &str) -> Result<(), String> {
+    let p = Path::new(path);
+    // Reset index to HEAD for all paths
+    run_git(p, &["restore", "--staged", "."])?;
     Ok(())
 }
 
@@ -355,6 +386,134 @@ pub fn commit_log(path: &str, limit: usize) -> Result<Vec<crate::models::CommitL
         });
     }
     Ok(entries)
+}
+
+/// Create a local branch; optionally check it out.
+pub fn create_branch(path: &str, name: &str, checkout: bool) -> Result<String, String> {
+    let p = Path::new(path);
+    let name = name.trim();
+    if name.is_empty() {
+        return Err("Branch name is required".into());
+    }
+    if name.contains(' ') || name.contains("..") {
+        return Err("Invalid branch name".into());
+    }
+    // Fail if exists
+    if run_git(p, &["show-ref", "--verify", &format!("refs/heads/{name}")]).is_ok() {
+        return Err(format!("Branch already exists: {name}"));
+    }
+    if checkout {
+        run_git(p, &["checkout", "-b", name])?;
+        Ok(format!("Created and checked out {name}"))
+    } else {
+        run_git(p, &["branch", name])?;
+        Ok(format!("Created branch {name}"))
+    }
+}
+
+/// Delete a local branch (not the current one).
+pub fn delete_branch(path: &str, name: &str, force: bool) -> Result<String, String> {
+    let p = Path::new(path);
+    let name = name.trim();
+    if name.is_empty() {
+        return Err("Branch name is required".into());
+    }
+    if let Ok(Some(cur)) = current_branch(path) {
+        if cur == name {
+            return Err("Cannot delete the branch you are currently on".into());
+        }
+    }
+    let flag = if force { "-D" } else { "-d" };
+    run_git(p, &["branch", flag, name])?;
+    Ok(format!("Deleted branch {name}"))
+}
+
+/// Checkout a commit (detached HEAD) or create/checkout a branch at that commit.
+pub fn checkout_commit(
+    path: &str,
+    rev: &str,
+    new_branch: Option<&str>,
+) -> Result<String, String> {
+    let p = Path::new(path);
+    let rev = rev.trim();
+    if rev.is_empty() {
+        return Err("Commit hash is required".into());
+    }
+    if is_dirty(path)? {
+        return Err("Working tree has uncommitted changes".into());
+    }
+    if let Some(b) = new_branch.map(str::trim).filter(|s| !s.is_empty()) {
+        run_git(p, &["checkout", "-b", b, rev])?;
+        Ok(format!("Created branch {b} at {rev} and checked out"))
+    } else {
+        run_git(p, &["checkout", "--detach", rev])?;
+        Ok(format!("Checked out {rev} (detached HEAD)"))
+    }
+}
+
+/// Unified-ish diff for a working-tree file (unstaged + staged if present).
+pub fn file_diff(path: &str, file_path: &str) -> Result<String, String> {
+    let p = Path::new(path);
+    let file_path = file_path.trim();
+    if file_path.is_empty() {
+        return Err("File path is required".into());
+    }
+
+    // Prefer unstaged working tree diff; fall back to staged
+    let unstaged = run_git(
+        p,
+        &["diff", "--", file_path],
+    )
+    .unwrap_or_default();
+    let staged = run_git(
+        p,
+        &["diff", "--cached", "--", file_path],
+    )
+    .unwrap_or_default();
+
+    // Untracked: show as new file content via /dev/null trick may fail; try status
+    if unstaged.is_empty() && staged.is_empty() {
+        // untracked file?
+        let show = run_git(p, &["status", "--porcelain", "--", file_path]).unwrap_or_default();
+        if show.starts_with("??") || show.contains("??") {
+            // Read file content as "diff"
+            let full = p.join(file_path);
+            match std::fs::read_to_string(&full) {
+                Ok(content) => {
+                    let mut out = format!("Untracked file: {file_path}\n\n");
+                    for (i, line) in content.lines().enumerate() {
+                        if i >= 400 {
+                            out.push_str("… (truncated)\n");
+                            break;
+                        }
+                        out.push('+');
+                        out.push_str(line);
+                        out.push('\n');
+                    }
+                    return Ok(out);
+                }
+                Err(e) => return Err(format!("Could not read untracked file: {e}")),
+            }
+        }
+        return Ok("(no diff — binary, empty, or unchanged)".into());
+    }
+
+    let mut out = String::new();
+    if !staged.is_empty() {
+        out.push_str("--- staged ---\n");
+        out.push_str(&staged);
+        out.push('\n');
+    }
+    if !unstaged.is_empty() {
+        out.push_str("--- unstaged ---\n");
+        out.push_str(&unstaged);
+    }
+    // Truncate very large diffs
+    if out.len() > 80_000 {
+        out.truncate(80_000);
+        out.push_str("\n… (diff truncated)");
+    }
+    Ok(out)
 }
 
 #[derive(Debug, Clone)]

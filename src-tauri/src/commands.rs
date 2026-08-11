@@ -629,6 +629,36 @@ pub fn list_changed_files(
 }
 
 #[tauri::command]
+pub fn stage_files(
+    state: State<'_, AppState>,
+    repo_id: String,
+    paths: Vec<String>,
+) -> Result<Vec<ChangedFile>, String> {
+    let repo = state.db.get_repo(&repo_id)?;
+    if paths.is_empty() {
+        git::stage_all(&repo.path)?;
+    } else {
+        git::stage_paths(&repo.path, &paths)?;
+    }
+    git::list_changed_files(&repo.path)
+}
+
+#[tauri::command]
+pub fn unstage_files(
+    state: State<'_, AppState>,
+    repo_id: String,
+    paths: Vec<String>,
+) -> Result<Vec<ChangedFile>, String> {
+    let repo = state.db.get_repo(&repo_id)?;
+    if paths.is_empty() {
+        git::unstage_all(&repo.path)?;
+    } else {
+        git::unstage_paths(&repo.path, &paths)?;
+    }
+    git::list_changed_files(&repo.path)
+}
+
+#[tauri::command]
 pub fn commit_repo(
     state: State<'_, AppState>,
     request: CommitRequest,
@@ -663,6 +693,52 @@ pub fn get_commit_log(
 pub fn get_repo_path(state: State<'_, AppState>, repo_id: String) -> Result<String, String> {
     let repo = state.db.get_repo(&repo_id)?;
     Ok(repo.path)
+}
+
+#[tauri::command]
+pub fn create_branch(
+    state: State<'_, AppState>,
+    repo_id: String,
+    name: String,
+    checkout: Option<bool>,
+) -> Result<RepoStatus, String> {
+    let repo = state.db.get_repo(&repo_id)?;
+    git::create_branch(&repo.path, &name, checkout.unwrap_or(true))?;
+    Ok(git::repo_status(&repo.id, &repo.path))
+}
+
+#[tauri::command]
+pub fn delete_branch(
+    state: State<'_, AppState>,
+    repo_id: String,
+    name: String,
+    force: Option<bool>,
+) -> Result<(), String> {
+    let repo = state.db.get_repo(&repo_id)?;
+    git::delete_branch(&repo.path, &name, force.unwrap_or(false))?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn checkout_commit(
+    state: State<'_, AppState>,
+    repo_id: String,
+    rev: String,
+    new_branch: Option<String>,
+) -> Result<RepoStatus, String> {
+    let repo = state.db.get_repo(&repo_id)?;
+    git::checkout_commit(&repo.path, &rev, new_branch.as_deref())?;
+    Ok(git::repo_status(&repo.id, &repo.path))
+}
+
+#[tauri::command]
+pub fn get_file_diff(
+    state: State<'_, AppState>,
+    repo_id: String,
+    file_path: String,
+) -> Result<String, String> {
+    let repo = state.db.get_repo(&repo_id)?;
+    git::file_diff(&repo.path, &file_path)
 }
 
 #[tauri::command]

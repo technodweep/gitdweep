@@ -3,12 +3,17 @@ import { Link, useParams } from "react-router-dom";
 import {
   addRepo,
   checkoutBranch,
+  checkoutCommit,
   commitRepo,
+  createBranch,
+  deleteBranch,
   fetchAllRepos,
   fetchRepo,
   getCommitLog,
+  getFileDiff,
   getProject,
   getProjectRepoStatuses,
+  listBranches,
   listChangedFiles,
   listProjectBranches,
   openRepoFolder,
@@ -20,6 +25,8 @@ import {
   removeRepo,
   scanRepos,
   setRepoEnabled,
+  stageFiles,
+  unstageFiles,
 } from "../lib/api";
 import type {
   ChangedFile,
@@ -52,6 +59,9 @@ export function ProjectDetail() {
   const [commitMsg, setCommitMsg] = useState("");
   const [changedFiles, setChangedFiles] = useState<ChangedFile[]>([]);
   const [selectedPaths, setSelectedPaths] = useState<Set<string>>(new Set());
+  const [diffPath, setDiffPath] = useState<string | null>(null);
+  const [diffText, setDiffText] = useState("");
+  const [diffLoading, setDiffLoading] = useState(false);
   const [commitBusy, setCommitBusy] = useState(false);
 
   // History modal
@@ -59,6 +69,16 @@ export function ProjectDetail() {
   const [historyName, setHistoryName] = useState("");
   const [historyEntries, setHistoryEntries] = useState<CommitLogEntry[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
+  const [branchFromHash, setBranchFromHash] = useState("");
+  const [historyBusy, setHistoryBusy] = useState(false);
+
+  // Branch modal
+  const [branchRepoId, setBranchRepoId] = useState<string | null>(null);
+  const [branchRepoName, setBranchRepoName] = useState("");
+  const [branchList, setBranchList] = useState<string[]>([]);
+  const [newBranchName, setNewBranchName] = useState("");
+  const [checkoutNew, setCheckoutNew] = useState(true);
+  const [branchBusy, setBranchBusy] = useState(false);
 
   const [toast, setToast] = useState<{ msg: string; error?: boolean } | null>(
     null,
@@ -207,18 +227,52 @@ export function ProjectDetail() {
     }
   }
 
+  async function refreshChangedFiles(repoId: string) {
+    const files = await listChangedFiles(repoId);
+    setChangedFiles(files);
+    // Keep selection only for paths that still exist
+    setSelectedPaths((prev) => {
+      const keep = new Set<string>();
+      for (const f of files) {
+        if (prev.has(f.path)) keep.add(f.path);
+      }
+      // If nothing selected (first open), select unstaged / all
+      if (keep.size === 0) {
+        for (const f of files) keep.add(f.path);
+      }
+      return keep;
+    });
+    return files;
+  }
+
   async function openCommit(repoId: string, name: string) {
     setCommitRepoId(repoId);
     setCommitName(name);
     setCommitMsg("");
     setChangedFiles([]);
     setSelectedPaths(new Set());
+    setDiffPath(null);
+    setDiffText("");
     try {
       const files = await listChangedFiles(repoId);
       setChangedFiles(files);
       setSelectedPaths(new Set(files.map((f) => f.path)));
     } catch (e) {
       setToast({ msg: String(e), error: true });
+    }
+  }
+
+  async function showDiff(path: string) {
+    if (!commitRepoId) return;
+    setDiffPath(path);
+    setDiffLoading(true);
+    try {
+      const d = await getFileDiff(commitRepoId, path);
+      setDiffText(d);
+    } catch (e) {
+      setDiffText(String(e));
+    } finally {
+      setDiffLoading(false);
     }
   }
 
@@ -236,23 +290,95 @@ export function ProjectDetail() {
     else setSelectedPaths(new Set());
   }
 
-  async function submitCommit() {
-    if (!commitRepoId || !commitMsg.trim()) {
-      setToast({ msg: "Commit message required", error: true });
-      return;
-    }
+  async function onStageSelected() {
+    if (!commitRepoId) return;
     if (selectedPaths.size === 0) {
-      setToast({ msg: "Select at least one file", error: true });
+      setToast({ msg: "Select files to stage", error: true });
       return;
     }
     setCommitBusy(true);
     try {
-      const allSelected =
-        changedFiles.length > 0 &&
-        selectedPaths.size === changedFiles.length;
+      const files = await stageFiles(commitRepoId, Array.from(selectedPaths));
+      setChangedFiles(files);
+      setToast({ msg: `Staged ${selectedPaths.size} path(s)` });
+      await refresh();
+    } catch (e) {
+      setToast({ msg: String(e), error: true });
+    } finally {
+      setCommitBusy(false);
+    }
+  }
+
+  async function onUnstageSelected() {
+    if (!commitRepoId) return;
+    if (selectedPaths.size === 0) {
+      setToast({ msg: "Select files to unstage", error: true });
+      return;
+    }
+    setCommitBusy(true);
+    try {
+      const files = await unstageFiles(commitRepoId, Array.from(selectedPaths));
+      setChangedFiles(files);
+      setToast({ msg: `Unstaged ${selectedPaths.size} path(s)` });
+      await refresh();
+    } catch (e) {
+      setToast({ msg: String(e), error: true });
+    } finally {
+      setCommitBusy(false);
+    }
+  }
+
+  async function onStageAll() {
+    if (!commitRepoId) return;
+    setCommitBusy(true);
+    try {
+      const files = await stageFiles(commitRepoId, []);
+      setChangedFiles(files);
+      setSelectedPaths(new Set(files.map((f) => f.path)));
+      setToast({ msg: "Staged all changes" });
+      await refresh();
+    } catch (e) {
+      setToast({ msg: String(e), error: true });
+    } finally {
+      setCommitBusy(false);
+    }
+  }
+
+  async function onUnstageAll() {
+    if (!commitRepoId) return;
+    setCommitBusy(true);
+    try {
+      const files = await unstageFiles(commitRepoId, []);
+      setChangedFiles(files);
+      setToast({ msg: "Unstaged all" });
+      await refresh();
+    } catch (e) {
+      setToast({ msg: String(e), error: true });
+    } finally {
+      setCommitBusy(false);
+    }
+  }
+
+  /** Stage selected files (if any unstaged among selection), then commit. */
+  async function submitCommit(stageSelectedFirst: boolean) {
+    if (!commitRepoId || !commitMsg.trim()) {
+      setToast({ msg: "Commit message required", error: true });
+      return;
+    }
+    setCommitBusy(true);
+    try {
+      if (stageSelectedFirst) {
+        if (selectedPaths.size === 0) {
+          setToast({ msg: "Select files to stage & commit", error: true });
+          setCommitBusy(false);
+          return;
+        }
+        await stageFiles(commitRepoId, Array.from(selectedPaths));
+      }
+      // Commit whatever is currently staged
       const res = await commitRepo(commitRepoId, commitMsg.trim(), {
-        stageAll: allSelected,
-        paths: allSelected ? undefined : Array.from(selectedPaths),
+        stageAll: false,
+        paths: undefined,
       });
       setToast({
         msg: res.success
@@ -264,9 +390,7 @@ export function ProjectDetail() {
         setCommitRepoId(null);
         await refresh();
       } else {
-        // refresh file list
-        const files = await listChangedFiles(commitRepoId);
-        setChangedFiles(files);
+        await refreshChangedFiles(commitRepoId);
       }
     } catch (e) {
       setToast({ msg: String(e), error: true });
@@ -279,6 +403,7 @@ export function ProjectDetail() {
     setHistoryRepoId(repoId);
     setHistoryName(name);
     setHistoryEntries([]);
+    setBranchFromHash("");
     setHistoryLoading(true);
     try {
       const log = await getCommitLog(repoId, 50);
@@ -288,6 +413,120 @@ export function ProjectDetail() {
       setHistoryRepoId(null);
     } finally {
       setHistoryLoading(false);
+    }
+  }
+
+  async function onCheckoutDetached(hash: string) {
+    if (!historyRepoId) return;
+    if (
+      !confirm(
+        `Checkout ${hash.slice(0, 7)} as detached HEAD?\nWorking tree must be clean.`,
+      )
+    ) {
+      return;
+    }
+    setHistoryBusy(true);
+    try {
+      const st = await checkoutCommit(historyRepoId, hash, null);
+      setStatuses((prev) => ({ ...prev, [historyRepoId]: st }));
+      setToast({ msg: `Detached at ${hash.slice(0, 7)}` });
+      setHistoryRepoId(null);
+      await refresh();
+    } catch (e) {
+      setToast({ msg: String(e), error: true });
+    } finally {
+      setHistoryBusy(false);
+    }
+  }
+
+  async function onBranchAtCommit(hash: string) {
+    if (!historyRepoId) return;
+    const name = branchFromHash.trim();
+    if (!name) {
+      setToast({ msg: "Enter a new branch name", error: true });
+      return;
+    }
+    setHistoryBusy(true);
+    try {
+      const st = await checkoutCommit(historyRepoId, hash, name);
+      setStatuses((prev) => ({ ...prev, [historyRepoId]: st }));
+      setToast({ msg: `Branch ${name} at ${hash.slice(0, 7)}` });
+      setHistoryRepoId(null);
+      await refresh();
+    } catch (e) {
+      setToast({ msg: String(e), error: true });
+    } finally {
+      setHistoryBusy(false);
+    }
+  }
+
+  async function openBranches(repoId: string, name: string) {
+    setBranchRepoId(repoId);
+    setBranchRepoName(name);
+    setNewBranchName("");
+    setCheckoutNew(true);
+    try {
+      const list = await listBranches(repoId);
+      setBranchList(list);
+    } catch (e) {
+      setToast({ msg: String(e), error: true });
+    }
+  }
+
+  async function onCreateBranch() {
+    if (!branchRepoId || !newBranchName.trim()) return;
+    setBranchBusy(true);
+    try {
+      const st = await createBranch(
+        branchRepoId,
+        newBranchName.trim(),
+        checkoutNew,
+      );
+      setStatuses((prev) => ({ ...prev, [branchRepoId]: st }));
+      setToast({
+        msg: checkoutNew
+          ? `Created and checked out ${newBranchName.trim()}`
+          : `Created ${newBranchName.trim()}`,
+      });
+      setBranchRepoId(null);
+      await refresh();
+    } catch (e) {
+      setToast({ msg: String(e), error: true });
+    } finally {
+      setBranchBusy(false);
+    }
+  }
+
+  async function onDeleteBranchSafe(name: string) {
+    if (!branchRepoId) return;
+    if (!confirm(`Delete local branch “${name}”? (git branch -d)`)) return;
+    setBranchBusy(true);
+    try {
+      await deleteBranch(branchRepoId, name, false);
+      setToast({ msg: `Deleted ${name}` });
+      const list = await listBranches(branchRepoId);
+      setBranchList(list);
+      await refresh();
+    } catch (e) {
+      const msg = String(e);
+      if (
+        msg.toLowerCase().includes("not fully merged") &&
+        confirm(`${msg}\n\nForce delete with -D?`)
+      ) {
+        try {
+          await deleteBranch(branchRepoId, name, true);
+          setToast({ msg: `Force-deleted ${name}` });
+          const list = await listBranches(branchRepoId);
+          setBranchList(list);
+          await refresh();
+        } catch (e2) {
+          setToast({ msg: String(e2), error: true });
+        }
+      } else {
+        setToast({ msg, error: true });
+      }
+    } finally {
+      setBranchBusy(false);
     }
   }
 
@@ -328,7 +567,7 @@ export function ProjectDetail() {
             onClick={() =>
               void runBatch(
                 "fetch",
-                "Fetch (all remotes, prune) for {n} enabled repo(s)?",
+                "Fetch for {n} enabled repo(s)?",
                 fetchAllRepos,
               )
             }
@@ -341,7 +580,7 @@ export function ProjectDetail() {
             onClick={() =>
               void runBatch(
                 "pull",
-                "Pull (ff-only) for {n} enabled repo(s)? Dirty repos will fail.",
+                "Pull (ff-only) for {n} enabled repo(s)?",
                 pullAll,
               )
             }
@@ -352,11 +591,7 @@ export function ProjectDetail() {
             className="btn"
             disabled={busy}
             onClick={() =>
-              void runBatch(
-                "push",
-                "Push current branch for {n} enabled repo(s)?",
-                pushAll,
-              )
+              void runBatch("push", "Push for {n} enabled repo(s)?", pushAll)
             }
           >
             {batchBusy === "push" ? "Pushing…" : "Push all"}
@@ -447,7 +682,6 @@ export function ProjectDetail() {
                     <td className="mono">
                       {st?.ahead != null || st?.behind != null ? (
                         <span
-                          title="Ahead / behind upstream"
                           className={
                             (st.ahead ?? 0) > 0 || (st.behind ?? 0) > 0
                               ? "sync-drift"
@@ -457,9 +691,7 @@ export function ProjectDetail() {
                           ↑{st.ahead ?? 0} ↓{st.behind ?? 0}
                         </span>
                       ) : (
-                        <span className="muted" title="No upstream set">
-                          —
-                        </span>
+                        <span className="muted">—</span>
                       )}
                     </td>
                     <td>
@@ -505,11 +737,7 @@ export function ProjectDetail() {
                         }}
                       >
                         {!st?.currentBranch && (
-                          <option value="">
-                            {!branchesReady && repoBranches.length === 0
-                              ? "Loading…"
-                              : "Select…"}
-                          </option>
+                          <option value="">Select…</option>
                         )}
                         {st?.currentBranch &&
                           !repoBranches.includes(st.currentBranch) && (
@@ -556,9 +784,10 @@ export function ProjectDetail() {
                         <button
                           className="btn btn-sm"
                           disabled={busy || !st?.isDirty}
+                          title="Stage / unstage / commit"
                           onClick={() => void openCommit(repo.id, repo.name)}
                         >
-                          Commit
+                          Stage
                         </button>
                         <button
                           className="btn btn-sm"
@@ -570,7 +799,13 @@ export function ProjectDetail() {
                         <button
                           className="btn btn-sm"
                           disabled={busy}
-                          title="Open folder"
+                          onClick={() => void openBranches(repo.id, repo.name)}
+                        >
+                          Branches
+                        </button>
+                        <button
+                          className="btn btn-sm"
+                          disabled={busy}
                           onClick={() => void onOpenFolder(repo.id)}
                         >
                           Folder
@@ -592,13 +827,14 @@ export function ProjectDetail() {
         </div>
       )}
 
+      {/* Stage / Commit modal */}
       {commitRepoId && (
         <div className="modal-backdrop" onClick={() => setCommitRepoId(null)}>
           <div
             className="modal modal-wide"
             onClick={(e) => e.stopPropagation()}
           >
-            <h2>Commit — {commitName}</h2>
+            <h2>Stage & commit — {commitName}</h2>
             <div className="form-grid">
               <div className="file-list-header">
                 <strong>Changed files</strong>
@@ -619,29 +855,93 @@ export function ProjectDetail() {
                   </button>
                 </div>
               </div>
+
+              <div className="actions stage-actions">
+                <button
+                  type="button"
+                  className="btn btn-sm"
+                  disabled={commitBusy || selectedPaths.size === 0}
+                  onClick={() => void onStageSelected()}
+                >
+                  Stage selected
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-sm"
+                  disabled={commitBusy || selectedPaths.size === 0}
+                  onClick={() => void onUnstageSelected()}
+                >
+                  Unstage selected
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-sm"
+                  disabled={commitBusy || changedFiles.length === 0}
+                  onClick={() => void onStageAll()}
+                >
+                  Stage all
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-sm"
+                  disabled={commitBusy}
+                  onClick={() => void onUnstageAll()}
+                >
+                  Unstage all
+                </button>
+              </div>
+
               {changedFiles.length === 0 ? (
-                <p className="muted">No changes</p>
+                <p className="muted">No changes (working tree clean)</p>
               ) : (
-                <div className="file-list">
-                  {changedFiles.map((f) => (
-                    <label key={f.path} className="file-row">
-                      <input
-                        type="checkbox"
-                        checked={selectedPaths.has(f.path)}
-                        onChange={() => togglePath(f.path)}
-                      />
-                      <span className="file-status mono">{f.status}</span>
-                      <span className="mono file-path" title={f.path}>
-                        {f.path}
-                      </span>
-                      {f.staged && !f.unstaged && (
-                        <span className="badge ok">staged</span>
-                      )}
-                      {f.unstaged && f.staged && (
-                        <span className="badge warn">partial</span>
-                      )}
-                    </label>
-                  ))}
+                <div className="commit-layout">
+                  <div className="file-list">
+                    {changedFiles.map((f) => (
+                      <div key={f.path} className="file-row-wrap">
+                        <label className="file-row">
+                          <input
+                            type="checkbox"
+                            checked={selectedPaths.has(f.path)}
+                            onChange={() => togglePath(f.path)}
+                          />
+                          <span className="file-status mono">{f.status}</span>
+                          <span className="mono file-path" title={f.path}>
+                            {f.path}
+                          </span>
+                          {f.staged && !f.unstaged && (
+                            <span className="badge ok">staged</span>
+                          )}
+                          {f.staged && f.unstaged && (
+                            <span className="badge warn">partial</span>
+                          )}
+                          {!f.staged && f.unstaged && (
+                            <span className="badge warn">unstaged</span>
+                          )}
+                        </label>
+                        <button
+                          type="button"
+                          className="btn btn-sm"
+                          onClick={() => void showDiff(f.path)}
+                        >
+                          Diff
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="diff-panel">
+                    {diffLoading ? (
+                      <span className="muted">Loading diff…</span>
+                    ) : diffPath ? (
+                      <>
+                        <div className="muted mono" style={{ marginBottom: 6 }}>
+                          {diffPath}
+                        </div>
+                        <pre className="diff-pre">{diffText}</pre>
+                      </>
+                    ) : (
+                      <span className="muted">Select Diff on a file</span>
+                    )}
+                  </div>
                 </div>
               )}
               <label>
@@ -651,15 +951,14 @@ export function ProjectDetail() {
                   value={commitMsg}
                   onChange={(e) => setCommitMsg(e.target.value)}
                   placeholder="Describe the change"
-                  autoFocus
                   onKeyDown={(e) => {
-                    if (e.key === "Enter") void submitCommit();
+                    if (e.key === "Enter") void submitCommit(true);
                   }}
                 />
               </label>
               <p className="muted" style={{ fontSize: "0.85rem", margin: 0 }}>
-                Selected files will be staged, then committed (
-                {selectedPaths.size} selected).
+                Stage files first (or use “Stage & commit”). “Commit staged”
+                only commits what is already in the index.
               </p>
               <div className="actions" style={{ justifyContent: "flex-end" }}>
                 <button
@@ -667,7 +966,15 @@ export function ProjectDetail() {
                   disabled={commitBusy}
                   onClick={() => setCommitRepoId(null)}
                 >
-                  Cancel
+                  Close
+                </button>
+                <button
+                  className="btn"
+                  disabled={commitBusy || !commitMsg.trim()}
+                  title="Commit only what is already staged"
+                  onClick={() => void submitCommit(false)}
+                >
+                  Commit staged
                 </button>
                 <button
                   className="btn btn-primary"
@@ -676,9 +983,10 @@ export function ProjectDetail() {
                     !commitMsg.trim() ||
                     selectedPaths.size === 0
                   }
-                  onClick={() => void submitCommit()}
+                  title="Stage selected files, then commit"
+                  onClick={() => void submitCommit(true)}
                 >
-                  {commitBusy ? "Committing…" : "Commit"}
+                  {commitBusy ? "Working…" : "Stage & commit"}
                 </button>
               </div>
             </div>
@@ -686,6 +994,7 @@ export function ProjectDetail() {
         </div>
       )}
 
+      {/* History modal */}
       {historyRepoId && (
         <div className="modal-backdrop" onClick={() => setHistoryRepoId(null)}>
           <div
@@ -693,6 +1002,17 @@ export function ProjectDetail() {
             onClick={(e) => e.stopPropagation()}
           >
             <h2>History — {historyName}</h2>
+            <div className="card" style={{ marginBottom: "0.75rem" }}>
+              <label>
+                New branch name (for “Branch here”)
+                <input
+                  type="text"
+                  value={branchFromHash}
+                  onChange={(e) => setBranchFromHash(e.target.value)}
+                  placeholder="e.g. fix/from-old-commit"
+                />
+              </label>
+            </div>
             {historyLoading ? (
               <p className="muted">Loading…</p>
             ) : historyEntries.length === 0 ? (
@@ -709,15 +1029,114 @@ export function ProjectDetail() {
                       <div className="muted">
                         {e.author} · {e.when}
                       </div>
+                      <div className="row-actions" style={{ marginTop: 4 }}>
+                        <button
+                          className="btn btn-sm"
+                          disabled={historyBusy}
+                          onClick={() => void onCheckoutDetached(e.hash)}
+                        >
+                          Detach
+                        </button>
+                        <button
+                          className="btn btn-sm"
+                          disabled={historyBusy || !branchFromHash.trim()}
+                          onClick={() => void onBranchAtCommit(e.hash)}
+                        >
+                          Branch here
+                        </button>
+                      </div>
                     </div>
                   </div>
                 ))}
               </div>
             )}
             <div className="actions" style={{ justifyContent: "flex-end" }}>
-              <button className="btn" onClick={() => setHistoryRepoId(null)}>
+              <button
+                className="btn"
+                disabled={historyBusy}
+                onClick={() => setHistoryRepoId(null)}
+              >
                 Close
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Branches modal */}
+      {branchRepoId && (
+        <div className="modal-backdrop" onClick={() => setBranchRepoId(null)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <h2>Branches — {branchRepoName}</h2>
+            <div className="form-grid">
+              <label>
+                New branch
+                <input
+                  type="text"
+                  value={newBranchName}
+                  onChange={(e) => setNewBranchName(e.target.value)}
+                  placeholder="feature/my-work"
+                />
+              </label>
+              <label className="option-check">
+                <input
+                  type="checkbox"
+                  checked={checkoutNew}
+                  onChange={(e) => setCheckoutNew(e.target.checked)}
+                />
+                <span>Checkout after create</span>
+              </label>
+              <div className="actions">
+                <button
+                  className="btn btn-primary"
+                  disabled={branchBusy || !newBranchName.trim()}
+                  onClick={() => void onCreateBranch()}
+                >
+                  {branchBusy ? "Working…" : "Create branch"}
+                </button>
+              </div>
+              <div className="file-list" style={{ maxHeight: 280 }}>
+                {branchList.map((b) => {
+                  const current =
+                    statuses[branchRepoId]?.currentBranch === b;
+                  return (
+                    <div key={b} className="file-row-wrap">
+                      <span className="mono file-path">
+                        {b}
+                        {current ? " ★" : ""}
+                      </span>
+                      <div className="row-actions">
+                        {!current && (
+                          <>
+                            <button
+                              className="btn btn-sm"
+                              disabled={branchBusy}
+                              onClick={() => {
+                                void onCheckout(branchRepoId, b);
+                                setBranchRepoId(null);
+                              }}
+                            >
+                              Checkout
+                            </button>
+                            <button
+                              className="btn btn-sm btn-danger"
+                              disabled={branchBusy}
+                              onClick={() => void onDeleteBranchSafe(b)}
+                            >
+                              Delete
+                            </button>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+              <div className="actions" style={{ justifyContent: "flex-end" }}>
+                <button className="btn" onClick={() => setBranchRepoId(null)}>
+                  Close
+                </button>
+              </div>
             </div>
           </div>
         </div>

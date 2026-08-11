@@ -169,12 +169,28 @@ export async function listChangedFiles(repoId: string): Promise<ChangedFile[]> {
   return invoke("list_changed_files", { repoId });
 }
 
+/** Stage paths. Empty paths = stage all. Returns refreshed file list. */
+export async function stageFiles(
+  repoId: string,
+  paths: string[],
+): Promise<ChangedFile[]> {
+  return invoke("stage_files", { repoId, paths });
+}
+
+/** Unstage paths. Empty paths = unstage all. Returns refreshed file list. */
+export async function unstageFiles(
+  repoId: string,
+  paths: string[],
+): Promise<ChangedFile[]> {
+  return invoke("unstage_files", { repoId, paths });
+}
+
 export async function commitRepo(
   repoId: string,
   message: string,
   options: { stageAll?: boolean; paths?: string[] } = {},
 ): Promise<CommitResult> {
-  const stageAll = options.stageAll ?? !options.paths?.length;
+  const stageAll = options.stageAll ?? false;
   return invoke("commit_repo", {
     request: {
       repoId,
@@ -200,6 +216,41 @@ export async function openRepoFolder(repoId: string): Promise<void> {
   const path = await getRepoPath(repoId);
   const { openPath } = await import("@tauri-apps/plugin-opener");
   await openPath(path);
+}
+
+export async function createBranch(
+  repoId: string,
+  name: string,
+  checkout = true,
+): Promise<RepoStatus> {
+  return invoke("create_branch", { repoId, name, checkout });
+}
+
+export async function deleteBranch(
+  repoId: string,
+  name: string,
+  force = false,
+): Promise<void> {
+  return invoke("delete_branch", { repoId, name, force });
+}
+
+export async function checkoutCommit(
+  repoId: string,
+  rev: string,
+  newBranch?: string | null,
+): Promise<RepoStatus> {
+  return invoke("checkout_commit", {
+    repoId,
+    rev,
+    newBranch: newBranch ?? null,
+  });
+}
+
+export async function getFileDiff(
+  repoId: string,
+  filePath: string,
+): Promise<string> {
+  return invoke("get_file_diff", { repoId, filePath });
 }
 
 export async function getSetting(key: string): Promise<string | null> {
