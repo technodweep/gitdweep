@@ -36,6 +36,7 @@ import type {
   RepoStatus,
 } from "../lib/types";
 import { Toast } from "../components/Toast";
+import { DiffView } from "../components/DiffView";
 
 type BatchKind = "pull" | "fetch" | "push";
 
@@ -257,6 +258,18 @@ export function ProjectDetail() {
       const files = await listChangedFiles(repoId);
       setChangedFiles(files);
       setSelectedPaths(new Set(files.map((f) => f.path)));
+      // Auto-open first file’s diff so the right panel isn’t empty
+      if (files[0]) {
+        setDiffPath(files[0].path);
+        setDiffLoading(true);
+        try {
+          setDiffText(await getFileDiff(repoId, files[0].path));
+        } catch (e) {
+          setDiffText(String(e));
+        } finally {
+          setDiffLoading(false);
+        }
+      }
     } catch (e) {
       setToast({ msg: String(e), error: true });
     }
@@ -896,51 +909,72 @@ export function ProjectDetail() {
               ) : (
                 <div className="commit-layout">
                   <div className="file-list">
-                    {changedFiles.map((f) => (
-                      <div key={f.path} className="file-row-wrap">
-                        <label className="file-row">
-                          <input
-                            type="checkbox"
-                            checked={selectedPaths.has(f.path)}
-                            onChange={() => togglePath(f.path)}
-                          />
-                          <span className="file-status mono">{f.status}</span>
-                          <span className="mono file-path" title={f.path}>
-                            {f.path}
-                          </span>
-                          {f.staged && !f.unstaged && (
-                            <span className="badge ok">staged</span>
-                          )}
-                          {f.staged && f.unstaged && (
-                            <span className="badge warn">partial</span>
-                          )}
-                          {!f.staged && f.unstaged && (
-                            <span className="badge warn">unstaged</span>
-                          )}
-                        </label>
-                        <button
-                          type="button"
-                          className="btn btn-sm"
-                          onClick={() => void showDiff(f.path)}
+                    {changedFiles.map((f) => {
+                      const active = diffPath === f.path;
+                      return (
+                        <div
+                          key={f.path}
+                          className={`file-row-wrap${active ? " active" : ""}`}
                         >
-                          Diff
-                        </button>
-                      </div>
-                    ))}
+                          <label className="file-row">
+                            <input
+                              type="checkbox"
+                              checked={selectedPaths.has(f.path)}
+                              onChange={() => togglePath(f.path)}
+                              onClick={(e) => e.stopPropagation()}
+                            />
+                            <span
+                              className={`file-status mono status-${f.status === "?" ? "untracked" : f.status.toLowerCase()}`}
+                              title={
+                                f.status === "?"
+                                  ? "New / untracked"
+                                  : f.status === "M"
+                                    ? "Modified"
+                                    : f.status === "A"
+                                      ? "Added"
+                                      : f.status === "D"
+                                        ? "Deleted"
+                                        : f.status
+                              }
+                            >
+                              {f.status === "?"
+                                ? "NEW"
+                                : f.status === "M"
+                                  ? "MOD"
+                                  : f.status === "A"
+                                    ? "ADD"
+                                    : f.status === "D"
+                                      ? "DEL"
+                                      : f.status}
+                            </span>
+                            <button
+                              type="button"
+                              className="file-path-btn mono"
+                              title={`${f.path} — click to view changes`}
+                              onClick={() => void showDiff(f.path)}
+                            >
+                              {f.path}
+                            </button>
+                            {f.staged && !f.unstaged && (
+                              <span className="badge ok">staged</span>
+                            )}
+                            {f.staged && f.unstaged && (
+                              <span className="badge warn">partial</span>
+                            )}
+                            {!f.staged && f.unstaged && (
+                              <span className="badge warn">unstaged</span>
+                            )}
+                          </label>
+                        </div>
+                      );
+                    })}
                   </div>
                   <div className="diff-panel">
-                    {diffLoading ? (
-                      <span className="muted">Loading diff…</span>
-                    ) : diffPath ? (
-                      <>
-                        <div className="muted mono" style={{ marginBottom: 6 }}>
-                          {diffPath}
-                        </div>
-                        <pre className="diff-pre">{diffText}</pre>
-                      </>
-                    ) : (
-                      <span className="muted">Select Diff on a file</span>
-                    )}
+                    <DiffView
+                      filePath={diffPath}
+                      diffText={diffText}
+                      loading={diffLoading}
+                    />
                   </div>
                 </div>
               )}
