@@ -1,5 +1,8 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
+  ChangedFile,
+  CommitLogEntry,
+  CommitResult,
   CreateProjectRequest,
   Environment,
   EnvironmentBranch,
@@ -10,6 +13,7 @@ import type {
   RepoStatus,
   ScannedRepo,
   SwitchOptions,
+  SwitchPreviewItem,
   SwitchResult,
 } from "./types";
 
@@ -125,6 +129,14 @@ export async function switchEnvironment(
   return invoke("switch_environment", { projectId, envId, options });
 }
 
+export async function previewSwitchEnvironment(
+  projectId: string,
+  envId: string,
+  options: SwitchOptions,
+): Promise<SwitchPreviewItem[]> {
+  return invoke("preview_switch_environment", { projectId, envId, options });
+}
+
 export async function pullAll(projectId: string): Promise<PullResult[]> {
   return invoke("pull_all", { projectId });
 }
@@ -135,6 +147,59 @@ export async function fetchAllRepos(projectId: string): Promise<PullResult[]> {
 
 export async function pushAll(projectId: string): Promise<PullResult[]> {
   return invoke("push_all", { projectId });
+}
+
+export async function pullRepo(repoId: string): Promise<PullResult> {
+  return invoke("pull_repo", { repoId });
+}
+
+export async function pushRepo(repoId: string): Promise<PullResult> {
+  return invoke("push_repo", { repoId });
+}
+
+export async function fetchRepo(repoId: string): Promise<PullResult> {
+  return invoke("fetch_repo", { repoId });
+}
+
+export async function getChangeSummary(repoId: string): Promise<string> {
+  return invoke("get_change_summary", { repoId });
+}
+
+export async function listChangedFiles(repoId: string): Promise<ChangedFile[]> {
+  return invoke("list_changed_files", { repoId });
+}
+
+export async function commitRepo(
+  repoId: string,
+  message: string,
+  options: { stageAll?: boolean; paths?: string[] } = {},
+): Promise<CommitResult> {
+  const stageAll = options.stageAll ?? !options.paths?.length;
+  return invoke("commit_repo", {
+    request: {
+      repoId,
+      message,
+      stageAll,
+      paths: options.paths ?? null,
+    },
+  });
+}
+
+export async function getCommitLog(
+  repoId: string,
+  limit = 40,
+): Promise<CommitLogEntry[]> {
+  return invoke("get_commit_log", { repoId, limit });
+}
+
+export async function getRepoPath(repoId: string): Promise<string> {
+  return invoke("get_repo_path", { repoId });
+}
+
+export async function openRepoFolder(repoId: string): Promise<void> {
+  const path = await getRepoPath(repoId);
+  const { openPath } = await import("@tauri-apps/plugin-opener");
+  await openPath(path);
 }
 
 export async function getSetting(key: string): Promise<string | null> {

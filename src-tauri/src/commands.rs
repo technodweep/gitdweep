@@ -475,6 +475,196 @@ pub fn push_all(
     run_batch_git_op(&app, &state, &project_id, "push-progress", "Pushing…", git::push)
 }
 
+/// Dry-run: plan what switch_environment would do (no git mutations).
+#[tauri::command]
+pub fn preview_switch_environment(
+    state: State<'_, AppState>,
+    project_id: String,
+    env_id: String,
+    options: Option<SwitchOptions>,
+) -> Result<Vec<SwitchPreviewItem>, String> {
+    let opts = options.unwrap_or_default();
+    let detail = state.db.get_project(&project_id)?;
+    let map = state.db.get_environment_map(&env_id)?;
+    let branch_by_repo: HashMap<String, String> = map
+        .into_iter()
+        .map(|b| (b.repo_id, b.branch))
+        .collect();
+
+    let mut items = Vec::new();
+    for repo in detail.repos.iter().filter(|r| r.enabled) {
+        let current = git::current_branch(&repo.path).ok().flatten();
+        let dirty = git::is_dirty(&repo.path).unwrap_or(false);
+        let target = branch_by_repo
+            .get(&repo.id)
+            .cloned()
+            .unwrap_or_default();
+
+        let (action, detail_msg) = if target.is_empty() {
+            (
+                "no_target".into(),
+                "No target branch configured".into(),
+            )
+        } else if current.as_deref() == Some(target.as_str()) {
+            (
+                "skip".into(),
+                format!("Already on {target}"),
+            )
+        } else if dirty && !opts.stash_if_dirty {
+            (
+                "will_fail".into(),
+                "Dirty working tree (enable stash to proceed)".into(),
+            )
+        } else if dirty && opts.stash_if_dirty {
+            let pop = if opts.pop_stash_after {
+                "; then pop stash"
+            } else {
+                "; leave stash"
+            };
+            (
+                "will_stash".into(),
+                format!("Stash, checkout {target}{pop}"),
+            )
+        } else {
+            let fetch = if opts.fetch_first { "Fetch, then " } else { "" };
+            (
+                "will_switch".into(),
+                format!("{fetch}Checkout {target}"),
+            )
+        };
+
+        items.push(SwitchPreviewItem {
+            repo_id: repo.id.clone(),
+            repo_name: repo.name.clone(),
+            path: repo.path.clone(),
+            current_branch: current,
+            target_branch: target,
+            is_dirty: dirty,
+            action,
+            detail: detail_msg,
+        });
+    }
+    Ok(items)
+}
+
+#[tauri::command]
+pub fn pull_repo(state: State<'_, AppState>, repo_id: String) -> Result<PullResult, String> {
+    let repo = state.db.get_repo(&repo_id)?;
+    match git::pull(&repo.path) {
+        Ok(msg) => Ok(PullResult {
+            repo_id: repo.id,
+            repo_name: repo.name,
+            path: repo.path,
+            success: true,
+            message: git::truncate_msg(&msg, 160),
+        }),
+        Err(e) => Ok(PullResult {
+            repo_id: repo.id,
+            repo_name: repo.name,
+            path: repo.path,
+            success: false,
+            message: e,
+        }),
+    }
+}
+
+#[tauri::command]
+pub fn push_repo(state: State<'_, AppState>, repo_id: String) -> Result<PullResult, String> {
+    let repo = state.db.get_repo(&repo_id)?;
+    match git::push(&repo.path) {
+        Ok(msg) => Ok(PullResult {
+            repo_id: repo.id,
+            repo_name: repo.name,
+            path: repo.path,
+            success: true,
+            message: git::truncate_msg(&msg, 160),
+        }),
+        Err(e) => Ok(PullResult {
+            repo_id: repo.id,
+            repo_name: repo.name,
+            path: repo.path,
+            success: false,
+            message: e,
+        }),
+    }
+}
+
+#[tauri::command]
+pub fn fetch_repo(state: State<'_, AppState>, repo_id: String) -> Result<PullResult, String> {
+    let repo = state.db.get_repo(&repo_id)?;
+    match git::fetch_all(&repo.path) {
+        Ok(msg) => Ok(PullResult {
+            repo_id: repo.id,
+            repo_name: repo.name,
+            path: repo.path,
+            success: true,
+            message: git::truncate_msg(&msg, 160),
+        }),
+        Err(e) => Ok(PullResult {
+            repo_id: repo.id,
+            repo_name: repo.name,
+            path: repo.path,
+            success: false,
+            message: e,
+        }),
+    }
+}
+
+#[tauri::command]
+pub fn get_change_summary(
+    state: State<'_, AppState>,
+    repo_id: String,
+) -> Result<String, String> {
+    let repo = state.db.get_repo(&repo_id)?;
+    git::change_summary(&repo.path)
+}
+
+#[tauri::command]
+pub fn list_changed_files(
+    state: State<'_, AppState>,
+    repo_id: String,
+) -> Result<Vec<ChangedFile>, String> {
+    let repo = state.db.get_repo(&repo_id)?;
+    git::list_changed_files(&repo.path)
+}
+
+#[tauri::command]
+pub fn commit_repo(
+    state: State<'_, AppState>,
+    request: CommitRequest,
+) -> Result<CommitResult, String> {
+    let repo = state.db.get_repo(&request.repo_id)?;
+    let paths = request.paths.as_deref();
+    match git::commit_all(&repo.path, &request.message, request.stage_all, paths) {
+        Ok(msg) => Ok(CommitResult {
+            repo_id: repo.id,
+            success: true,
+            message: git::truncate_msg(&msg, 200),
+        }),
+        Err(e) => Ok(CommitResult {
+            repo_id: repo.id,
+            success: false,
+            message: e,
+        }),
+    }
+}
+
+#[tauri::command]
+pub fn get_commit_log(
+    state: State<'_, AppState>,
+    repo_id: String,
+    limit: Option<usize>,
+) -> Result<Vec<CommitLogEntry>, String> {
+    let repo = state.db.get_repo(&repo_id)?;
+    git::commit_log(&repo.path, limit.unwrap_or(40))
+}
+
+#[tauri::command]
+pub fn get_repo_path(state: State<'_, AppState>, repo_id: String) -> Result<String, String> {
+    let repo = state.db.get_repo(&repo_id)?;
+    Ok(repo.path)
+}
+
 #[tauri::command]
 pub fn get_setting(state: State<'_, AppState>, key: String) -> Result<Option<String>, String> {
     state.db.get_setting(&key)

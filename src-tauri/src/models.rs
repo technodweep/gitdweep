@@ -144,3 +144,57 @@ pub struct PullResult {
 
 /// Shared shape for pull / push / fetch batch ops
 pub type BatchGitResult = PullResult;
+
+/// Planned action for dry-run switch preview
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SwitchPreviewItem {
+    pub repo_id: String,
+    pub repo_name: String,
+    pub path: String,
+    pub current_branch: Option<String>,
+    pub target_branch: String,
+    pub is_dirty: bool,
+    /// ok | skip | will_switch | will_stash | will_fail | no_target
+    pub action: String,
+    pub detail: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommitRequest {
+    pub repo_id: String,
+    pub message: String,
+    /// If true, `git add -A` before commit
+    pub stage_all: bool,
+    /// If set (and not stage_all), stage only these paths then commit
+    pub paths: Option<Vec<String>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommitResult {
+    pub repo_id: String,
+    pub success: bool,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChangedFile {
+    pub path: String,
+    /// Short code e.g. M, A, D, ?, R
+    pub status: String,
+    pub staged: bool,
+    pub unstaged: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommitLogEntry {
+    pub hash: String,
+    pub short_hash: String,
+    pub subject: String,
+    pub author: String,
+    pub when: String,
+}

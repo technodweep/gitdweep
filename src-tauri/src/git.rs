@@ -218,6 +218,145 @@ pub fn push(path: &str) -> Result<String, String> {
     }
 }
 
+pub fn change_summary(path: &str) -> Result<String, String> {
+    let files = list_changed_files(path)?;
+    if files.is_empty() {
+        return Ok("No changes".into());
+    }
+    let mut modified = 0;
+    let mut added = 0;
+    let mut deleted = 0;
+    let mut untracked = 0;
+    for f in &files {
+        match f.status.as_str() {
+            "?" | "??" => untracked += 1,
+            "A" => added += 1,
+            "D" => deleted += 1,
+            _ => modified += 1,
+        }
+    }
+    Ok(format!(
+        "{} file(s): ~{modified} +{added} -{deleted} ?{untracked}",
+        files.len()
+    ))
+}
+
+pub fn list_changed_files(path: &str) -> Result<Vec<crate::models::ChangedFile>, String> {
+    use crate::models::ChangedFile;
+    let p = Path::new(path);
+    let porcelain = run_git(p, &["status", "--porcelain", "-u"])?;
+    if porcelain.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut out = Vec::new();
+    for line in porcelain.lines() {
+        if line.len() < 3 {
+            continue;
+        }
+        let x = line.chars().next().unwrap_or(' ');
+        let y = line.chars().nth(1).unwrap_or(' ');
+        // path starts after "XY "
+        let rest = line[2..].trim_start();
+        // renames: "old -> new"
+        let file_path = if let Some(idx) = rest.find(" -> ") {
+            rest[idx + 4..].to_string()
+        } else {
+            // quoted paths
+            rest.trim_matches('"').to_string()
+        };
+
+        let staged = x != ' ' && x != '?';
+        let unstaged = y != ' ' || x == '?';
+        let status = if x == '?' || y == '?' {
+            "?".into()
+        } else if x != ' ' && x != '?' {
+            x.to_string()
+        } else {
+            y.to_string()
+        };
+
+        out.push(ChangedFile {
+            path: file_path,
+            status,
+            staged,
+            unstaged,
+        });
+    }
+    Ok(out)
+}
+
+pub fn stage_paths(path: &str, paths: &[String]) -> Result<(), String> {
+    let p = Path::new(path);
+    if paths.is_empty() {
+        return Err("No files selected".into());
+    }
+    let mut args = vec!["add".to_string(), "--".to_string()];
+    args.extend(paths.iter().cloned());
+    let args_ref: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+    run_git(p, &args_ref)?;
+    Ok(())
+}
+
+/// Stage all, selected paths, or nothing; then commit.
+pub fn commit_all(
+    path: &str,
+    message: &str,
+    stage_all: bool,
+    paths: Option<&[String]>,
+) -> Result<String, String> {
+    let p = Path::new(path);
+    let msg = message.trim();
+    if msg.is_empty() {
+        return Err("Commit message is required".into());
+    }
+    if stage_all {
+        run_git(p, &["add", "-A"])?;
+    } else if let Some(sel) = paths {
+        if !sel.is_empty() {
+            stage_paths(path, sel)?;
+        }
+    }
+    let staged = run_git(p, &["diff", "--cached", "--name-only"])?;
+    if staged.is_empty() {
+        return Err("Nothing staged to commit".into());
+    }
+    run_git_with_stderr(p, &["commit", "-m", msg])
+}
+
+pub fn commit_log(path: &str, limit: usize) -> Result<Vec<crate::models::CommitLogEntry>, String> {
+    use crate::models::CommitLogEntry;
+    let p = Path::new(path);
+    let n = limit.clamp(1, 200).to_string();
+    // unit separator between fields
+    let out = run_git(
+        p,
+        &[
+            "log",
+            &format!("-{n}"),
+            "--format=%H%x1f%h%x1f%s%x1f%an%x1f%cr",
+        ],
+    )?;
+    if out.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut entries = Vec::new();
+    for line in out.lines() {
+        let parts: Vec<&str> = line.split('\u{1f}').collect();
+        if parts.len() < 5 {
+            continue;
+        }
+        entries.push(CommitLogEntry {
+            hash: parts[0].to_string(),
+            short_hash: parts[1].to_string(),
+            subject: parts[2].to_string(),
+            author: parts[3].to_string(),
+            when: parts[4].to_string(),
+        });
+    }
+    Ok(entries)
+}
+
 #[derive(Debug, Clone)]
 pub struct CheckoutOutcome {
     pub message: String,

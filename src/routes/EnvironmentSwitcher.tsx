@@ -6,6 +6,7 @@ import {
   getProject,
   getProjectRepoStatuses,
   listEnvironments,
+  previewSwitchEnvironment,
   switchEnvironment,
 } from "../lib/api";
 import type {
@@ -13,10 +14,27 @@ import type {
   EnvironmentBranch,
   ProjectDetail,
   RepoStatus,
+  SwitchPreviewItem,
   SwitchProgress,
   SwitchResult,
 } from "../lib/types";
 import { Toast } from "../components/Toast";
+
+function previewBadgeClass(action: string): string {
+  switch (action) {
+    case "skip":
+      return "ok";
+    case "will_switch":
+      return "ok";
+    case "will_stash":
+      return "warn";
+    case "will_fail":
+    case "no_target":
+      return "err";
+    default:
+      return "warn";
+  }
+}
 
 export function EnvironmentSwitcher() {
   const { projectId = "" } = useParams();
@@ -25,15 +43,23 @@ export function EnvironmentSwitcher() {
   const [envId, setEnvId] = useState<string | null>(null);
   const [branchMap, setBranchMap] = useState<Record<string, string>>({});
   const [statuses, setStatuses] = useState<Record<string, RepoStatus>>({});
+  const [preview, setPreview] = useState<Record<string, SwitchPreviewItem>>({});
   const [progress, setProgress] = useState<Record<string, SwitchProgress>>({});
   const [results, setResults] = useState<SwitchResult[] | null>(null);
   const [running, setRunning] = useState(false);
+  const [previewLoading, setPreviewLoading] = useState(false);
   const [stashIfDirty, setStashIfDirty] = useState(false);
   const [fetchFirst, setFetchFirst] = useState(false);
   const [popStashAfter, setPopStashAfter] = useState(false);
   const [toast, setToast] = useState<{ msg: string; error?: boolean } | null>(
     null,
   );
+
+  const options = {
+    stashIfDirty,
+    fetchFirst,
+    popStashAfter: stashIfDirty && popStashAfter,
+  };
 
   const refresh = useCallback(async () => {
     try {
@@ -75,6 +101,30 @@ export function EnvironmentSwitcher() {
     })();
   }, [envId]);
 
+  // Live dry-run preview when env / options change
+  useEffect(() => {
+    if (!envId || running) return;
+    let cancelled = false;
+    setPreviewLoading(true);
+    void (async () => {
+      try {
+        const items = await previewSwitchEnvironment(projectId, envId, options);
+        if (cancelled) return;
+        const map: Record<string, SwitchPreviewItem> = {};
+        for (const i of items) map[i.repoId] = i;
+        setPreview(map);
+      } catch (err) {
+        if (!cancelled) setToast({ msg: String(err), error: true });
+      } finally {
+        if (!cancelled) setPreviewLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- options fields listed explicitly
+  }, [projectId, envId, stashIfDirty, fetchFirst, popStashAfter, running]);
+
   useEffect(() => {
     let unlisten: (() => void) | undefined;
     void listen<SwitchProgress>("switch-progress", (event) => {
@@ -88,7 +138,6 @@ export function EnvironmentSwitcher() {
     };
   }, []);
 
-  // Pop stash only makes sense when stash is enabled
   useEffect(() => {
     if (!stashIfDirty) setPopStashAfter(false);
   }, [stashIfDirty]);
@@ -96,37 +145,29 @@ export function EnvironmentSwitcher() {
   async function onSwitch() {
     if (!envId) return;
     const env = envs.find((e) => e.id === envId);
-    const dirtyCount = enabledRepos.filter(
-      (r) => statuses[r.id]?.isDirty,
+    const willFail = Object.values(preview).filter(
+      (p) => p.action === "will_fail" || p.action === "no_target",
     ).length;
+    const willChange = Object.values(preview).filter(
+      (p) => p.action === "will_switch" || p.action === "will_stash",
+    ).length;
+
     const parts = [
       `Switch all enabled repos to environment “${env?.name ?? envId}”?`,
+      `Preview: ${willChange} will change, ${willFail} will fail/skip config.`,
     ];
     if (stashIfDirty) {
       parts.push("Dirty repos will be stashed before checkout.");
-      if (popStashAfter) {
-        parts.push("Stash will be popped after a successful checkout.");
-      }
-    } else if (dirtyCount > 0) {
-      parts.push(
-        `${dirtyCount} dirty repo(s) will fail unless you enable stash.`,
-      );
+      if (popStashAfter) parts.push("Stash will be popped after success.");
     }
-    if (fetchFirst) {
-      parts.push("Each repo will fetch before checkout.");
-    }
-    if (!confirm(parts.join("\n\n"))) {
-      return;
-    }
+    if (fetchFirst) parts.push("Each repo will fetch before checkout.");
+    if (!confirm(parts.join("\n\n"))) return;
+
     setRunning(true);
     setResults(null);
     setProgress({});
     try {
-      const res = await switchEnvironment(projectId, envId, {
-        stashIfDirty,
-        fetchFirst,
-        popStashAfter: stashIfDirty && popStashAfter,
-      });
+      const res = await switchEnvironment(projectId, envId, options);
       setResults(res);
       const ok = res.filter((r) => r.success).length;
       const fail = res.length - ok;
@@ -150,8 +191,8 @@ export function EnvironmentSwitcher() {
         <div>
           <h1>Switch environment</h1>
           <p>
-            Checkout every enabled repo to its target branch for the selected
-            environment.
+            Dry-run preview updates as you change options. Then run the real
+            switch.
           </p>
         </div>
         <div className="actions">
@@ -178,10 +219,7 @@ export function EnvironmentSwitcher() {
           />
           <span>
             Stash if dirty
-            <span className="muted">
-              {" "}
-              — auto-stash uncommitted changes before checkout
-            </span>
+            <span className="muted"> — auto-stash before checkout</span>
           </span>
         </label>
         <label className="option-check" style={{ marginLeft: "1.5rem" }}>
@@ -193,10 +231,7 @@ export function EnvironmentSwitcher() {
           />
           <span>
             Pop stash after switch
-            <span className="muted">
-              {" "}
-              — restore stash only on repos that were stashed
-            </span>
+            <span className="muted"> — only repos that were stashed</span>
           </span>
         </label>
         <label className="option-check">
@@ -208,9 +243,14 @@ export function EnvironmentSwitcher() {
           />
           <span>
             Fetch before switch
-            <span className="muted"> — git fetch --all --prune per repo</span>
+            <span className="muted"> — git fetch --all --prune</span>
           </span>
         </label>
+        {previewLoading && (
+          <div className="muted" style={{ fontSize: "0.85rem" }}>
+            Updating preview…
+          </div>
+        )}
       </div>
 
       <div className="tabs">
@@ -239,6 +279,7 @@ export function EnvironmentSwitcher() {
                 <th>Repo</th>
                 <th>Current</th>
                 <th>Target</th>
+                <th>Preview</th>
                 <th>Progress / result</th>
               </tr>
             </thead>
@@ -246,30 +287,36 @@ export function EnvironmentSwitcher() {
               {enabledRepos.map((repo) => {
                 const st = statuses[repo.id];
                 const target = branchMap[repo.id] ?? "";
+                const prev = preview[repo.id];
                 const prog = progress[repo.id];
                 const result = results?.find((r) => r.repoId === repo.id);
-                const already =
-                  !!target && st?.currentBranch === target && !result && !prog;
                 return (
                   <tr key={repo.id}>
                     <td>
                       <strong>{repo.name}</strong>
                     </td>
                     <td className="mono">
-                      {st?.currentBranch ?? "—"}
-                      {st?.isDirty ? (
+                      {st?.currentBranch ?? prev?.currentBranch ?? "—"}
+                      {(st?.isDirty ?? prev?.isDirty) ? (
                         <span className="badge warn" style={{ marginLeft: 8 }}>
                           dirty
                         </span>
                       ) : null}
                     </td>
                     <td className="mono">
-                      {target || "— not set —"}
-                      {already ? (
-                        <span className="badge ok" style={{ marginLeft: 8 }}>
-                          already
+                      {target || prev?.targetBranch || "— not set —"}
+                    </td>
+                    <td>
+                      {prev ? (
+                        <span
+                          className={`badge ${previewBadgeClass(prev.action)}`}
+                          title={prev.detail}
+                        >
+                          {prev.detail}
                         </span>
-                      ) : null}
+                      ) : (
+                        <span className="muted">—</span>
+                      )}
                     </td>
                     <td>
                       {result ? (

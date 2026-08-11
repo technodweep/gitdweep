@@ -96,3 +96,35 @@ export interface PullResult {
   success: boolean;
   message: string;
 }
+
+export interface SwitchPreviewItem {
+  repoId: string;
+  repoName: string;
+  path: string;
+  currentBranch: string | null;
+  targetBranch: string;
+  isDirty: boolean;
+  action: string;
+  detail: string;
+}
+
+export interface CommitResult {
+  repoId: string;
+  success: boolean;
+  message: string;
+}
+
+export interface ChangedFile {
+  path: string;
+  status: string;
+  staged: boolean;
+  unstaged: boolean;
+}
+
+export interface CommitLogEntry {
+  hash: string;
+  shortHash: string;
+  subject: string;
+  author: string;
+  when: string;
+}
