@@ -76,6 +76,7 @@ pub fn run() {
             commands::list_changed_files,
             commands::stage_files,
             commands::unstage_files,
+            commands::discard_files,
             commands::commit_repo,
             commands::get_commit_log,
             commands::get_repo_path,

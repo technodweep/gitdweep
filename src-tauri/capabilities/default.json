@@ -5,7 +5,18 @@
   "windows": ["main"],
   "permissions": [
     "core:default",
+    "dialog:default",
     "opener:default",
-    "dialog:default"
+    "opener:allow-open-url",
+    "opener:allow-reveal-item-in-dir",
+    {
+      "identifier": "opener:allow-open-path",
+      "allow": [
+        { "path": "**" },
+        { "path": "**/*" },
+        { "path": "$HOME/**" },
+        { "path": "$HOME/**/*" }
+      ]
+    }
   ]
 }

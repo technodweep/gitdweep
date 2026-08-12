@@ -25,6 +25,7 @@ import {
   removeRepo,
   scanRepos,
   setRepoEnabled,
+  discardFiles,
   stageFiles,
   unstageFiles,
 } from "../lib/api";
@@ -303,17 +304,35 @@ export function ProjectDetail() {
     else setSelectedPaths(new Set());
   }
 
-  async function onStageSelected() {
+  async function applyStagePaths(paths: string[], label: string) {
     if (!commitRepoId) return;
-    if (selectedPaths.size === 0) {
-      setToast({ msg: "Select files to stage", error: true });
+    if (paths.length === 0) {
+      setToast({ msg: `Select files to ${label.toLowerCase()}`, error: true });
       return;
     }
     setCommitBusy(true);
     try {
-      const files = await stageFiles(commitRepoId, Array.from(selectedPaths));
+      const files = await stageFiles(commitRepoId, paths);
       setChangedFiles(files);
-      setToast({ msg: `Staged ${selectedPaths.size} path(s)` });
+      setSelectedPaths((prev) => {
+        const next = new Set<string>();
+        for (const f of files) {
+          if (prev.has(f.path) || paths.includes(f.path)) next.add(f.path);
+        }
+        if (next.size === 0) {
+          for (const f of files) next.add(f.path);
+        }
+        return next;
+      });
+      setToast({ msg: `${label} ${paths.length} file(s)` });
+      // Refresh diff for current file if still open
+      if (diffPath) {
+        try {
+          setDiffText(await getFileDiff(commitRepoId, diffPath));
+        } catch {
+          /* ignore */
+        }
+      }
       await refresh();
     } catch (e) {
       setToast({ msg: String(e), error: true });
@@ -322,23 +341,38 @@ export function ProjectDetail() {
     }
   }
 
-  async function onUnstageSelected() {
+  async function applyUnstagePaths(paths: string[], label: string) {
     if (!commitRepoId) return;
-    if (selectedPaths.size === 0) {
-      setToast({ msg: "Select files to unstage", error: true });
+    if (paths.length === 0) {
+      setToast({ msg: `Select files to ${label.toLowerCase()}`, error: true });
       return;
     }
     setCommitBusy(true);
     try {
-      const files = await unstageFiles(commitRepoId, Array.from(selectedPaths));
+      const files = await unstageFiles(commitRepoId, paths);
       setChangedFiles(files);
-      setToast({ msg: `Unstaged ${selectedPaths.size} path(s)` });
+      setToast({ msg: `${label} ${paths.length} file(s)` });
+      if (diffPath) {
+        try {
+          setDiffText(await getFileDiff(commitRepoId, diffPath));
+        } catch {
+          /* ignore */
+        }
+      }
       await refresh();
     } catch (e) {
       setToast({ msg: String(e), error: true });
     } finally {
       setCommitBusy(false);
     }
+  }
+
+  async function onStageSelected() {
+    await applyStagePaths(Array.from(selectedPaths), "Staged");
+  }
+
+  async function onUnstageSelected() {
+    await applyUnstagePaths(Array.from(selectedPaths), "Unstaged");
   }
 
   async function onStageAll() {
@@ -349,6 +383,13 @@ export function ProjectDetail() {
       setChangedFiles(files);
       setSelectedPaths(new Set(files.map((f) => f.path)));
       setToast({ msg: "Staged all changes" });
+      if (diffPath) {
+        try {
+          setDiffText(await getFileDiff(commitRepoId, diffPath));
+        } catch {
+          /* ignore */
+        }
+      }
       await refresh();
     } catch (e) {
       setToast({ msg: String(e), error: true });
@@ -364,12 +405,63 @@ export function ProjectDetail() {
       const files = await unstageFiles(commitRepoId, []);
       setChangedFiles(files);
       setToast({ msg: "Unstaged all" });
+      if (diffPath) {
+        try {
+          setDiffText(await getFileDiff(commitRepoId, diffPath));
+        } catch {
+          /* ignore */
+        }
+      }
       await refresh();
     } catch (e) {
       setToast({ msg: String(e), error: true });
     } finally {
       setCommitBusy(false);
     }
+  }
+
+  async function discardPaths(paths: string[]) {
+    if (!commitRepoId) return;
+    if (paths.length === 0) {
+      setToast({ msg: "Select files to discard", error: true });
+      return;
+    }
+    const n = paths.length;
+    const preview = paths.slice(0, 8).join("\n  ");
+    const more = n > 8 ? `\n  … and ${n - 8} more` : "";
+    if (
+      !confirm(
+        `Discard local changes for ${n} file(s)?\n\n  ${preview}${more}\n\n` +
+          `• Tracked files are restored to HEAD (staged + unstaged)\n` +
+          `• Untracked files are deleted\n\n` +
+          `This cannot be undone.`,
+      )
+    ) {
+      return;
+    }
+    setCommitBusy(true);
+    try {
+      const files = await discardFiles(commitRepoId, paths);
+      setChangedFiles(files);
+      setSelectedPaths(new Set(files.map((f) => f.path)));
+      if (diffPath && paths.includes(diffPath)) {
+        setDiffPath(null);
+        setDiffText("");
+      }
+      setToast({ msg: `Discarded ${n} file(s)` });
+      if (files.length === 0) {
+        setCommitRepoId(null);
+      }
+      await refresh();
+    } catch (e) {
+      setToast({ msg: String(e), error: true });
+    } finally {
+      setCommitBusy(false);
+    }
+  }
+
+  async function onDiscardSelected() {
+    await discardPaths(Array.from(selectedPaths));
   }
 
   /** Stage selected files (if any unstaged among selection), then commit. */
@@ -654,74 +746,34 @@ export function ProjectDetail() {
           </button>
         </div>
       ) : (
-        <div className="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Enabled</th>
-                <th>Repo</th>
-                <th>Branch</th>
-                <th>Sync</th>
-                <th>Last commit</th>
-                <th>Status</th>
-                <th>Change branch</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {detail.repos.map((repo) => {
-                const st = statuses[repo.id];
-                const repoBranches = branches[repo.id] ?? [];
-                const thisBusy = rowBusy === repo.id;
-                return (
-                  <tr key={repo.id}>
-                    <td>
-                      <input
-                        type="checkbox"
-                        checked={repo.enabled}
-                        onChange={(e) =>
-                          void onToggle(repo.id, e.target.checked)
-                        }
-                      />
-                    </td>
-                    <td>
-                      <strong>{repo.name}</strong>
-                      <div className="muted mono">{repo.path}</div>
-                    </td>
-                    <td className="mono">
-                      {st?.currentBranch ?? "—"}
-                      {st?.isDetached ? " (detached)" : ""}
-                    </td>
-                    <td className="mono">
-                      {st?.ahead != null || st?.behind != null ? (
-                        <span
-                          className={
-                            (st.ahead ?? 0) > 0 || (st.behind ?? 0) > 0
-                              ? "sync-drift"
-                              : "muted"
-                          }
-                        >
-                          ↑{st.ahead ?? 0} ↓{st.behind ?? 0}
-                        </span>
-                      ) : (
-                        <span className="muted">—</span>
-                      )}
-                    </td>
-                    <td>
-                      {st?.lastCommit ? (
-                        <div className="last-commit">
-                          <div className="commit-subject" title={st.lastCommit}>
-                            {st.lastCommit}
-                          </div>
-                          {st.lastCommitAt && (
-                            <div className="muted">{st.lastCommitAt}</div>
-                          )}
-                        </div>
-                      ) : (
-                        <span className="muted">—</span>
-                      )}
-                    </td>
-                    <td>
+        <div className="repo-list">
+          <div className="repo-list-meta muted">
+            {detail.repos.length} repo{detail.repos.length === 1 ? "" : "s"} ·
+            scroll vertically — no horizontal pan needed
+          </div>
+          {detail.repos.map((repo) => {
+            const st = statuses[repo.id];
+            const repoBranches = branches[repo.id] ?? [];
+            const thisBusy = rowBusy === repo.id;
+            return (
+              <article
+                key={repo.id}
+                className={`repo-card${repo.enabled ? "" : " disabled"}`}
+              >
+                <div className="repo-card-main">
+                  <label className="repo-enable" title="Include in batch ops">
+                    <input
+                      type="checkbox"
+                      checked={repo.enabled}
+                      onChange={(e) =>
+                        void onToggle(repo.id, e.target.checked)
+                      }
+                    />
+                  </label>
+
+                  <div className="repo-card-identity">
+                    <div className="repo-card-title-row">
+                      <h3 className="repo-card-name">{repo.name}</h3>
                       {st?.error ? (
                         <span className="badge err">{st.error}</span>
                       ) : st?.isDirty ? (
@@ -733,110 +785,143 @@ export function ProjectDetail() {
                           <span className="status-dot clean" /> clean
                         </span>
                       )}
-                    </td>
-                    <td>
-                      <select
-                        value={st?.currentBranch ?? ""}
-                        disabled={
-                          busy ||
-                          (!branchesReady && repoBranches.length === 0) ||
-                          !!st?.error
-                        }
-                        onChange={(e) => {
-                          const v = e.target.value;
-                          if (v && v !== st?.currentBranch) {
-                            void onCheckout(repo.id, v);
+                      {st?.ahead != null || st?.behind != null ? (
+                        <span
+                          className={
+                            (st.ahead ?? 0) > 0 || (st.behind ?? 0) > 0
+                              ? "sync-drift mono"
+                              : "muted mono"
                           }
-                        }}
-                      >
-                        {!st?.currentBranch && (
-                          <option value="">Select…</option>
-                        )}
-                        {st?.currentBranch &&
-                          !repoBranches.includes(st.currentBranch) && (
-                            <option value={st.currentBranch}>
-                              {st.currentBranch}
-                            </option>
-                          )}
-                        {repoBranches.map((b) => (
-                          <option key={b} value={b}>
-                            {b}
-                          </option>
-                        ))}
-                      </select>
-                    </td>
-                    <td>
-                      <div className="row-actions">
-                        <button
-                          className="btn btn-sm"
-                          disabled={busy}
-                          onClick={() =>
-                            void runRepoOp(repo.id, "Fetch", fetchRepo)
-                          }
+                          title="Ahead / behind upstream"
                         >
-                          {thisBusy ? "…" : "Fetch"}
-                        </button>
-                        <button
-                          className="btn btn-sm"
-                          disabled={busy}
-                          onClick={() =>
-                            void runRepoOp(repo.id, "Pull", pullRepo)
-                          }
-                        >
-                          Pull
-                        </button>
-                        <button
-                          className="btn btn-sm"
-                          disabled={busy}
-                          onClick={() =>
-                            void runRepoOp(repo.id, "Push", pushRepo)
-                          }
-                        >
-                          Push
-                        </button>
-                        <button
-                          className="btn btn-sm"
-                          disabled={busy || !st?.isDirty}
-                          title="Stage / unstage / commit"
-                          onClick={() => void openCommit(repo.id, repo.name)}
-                        >
-                          Stage
-                        </button>
-                        <button
-                          className="btn btn-sm"
-                          disabled={busy}
-                          onClick={() => void openHistory(repo.id, repo.name)}
-                        >
-                          History
-                        </button>
-                        <button
-                          className="btn btn-sm"
-                          disabled={busy}
-                          onClick={() => void openBranches(repo.id, repo.name)}
-                        >
-                          Branches
-                        </button>
-                        <button
-                          className="btn btn-sm"
-                          disabled={busy}
-                          onClick={() => void onOpenFolder(repo.id)}
-                        >
-                          Folder
-                        </button>
-                        <button
-                          className="btn btn-sm btn-danger"
-                          disabled={busy}
-                          onClick={() => void onRemove(repo.id, repo.name)}
-                        >
-                          Remove
-                        </button>
+                          ↑{st.ahead ?? 0} ↓{st.behind ?? 0}
+                        </span>
+                      ) : null}
+                    </div>
+                    <div className="muted mono repo-card-path" title={repo.path}>
+                      {repo.path}
+                    </div>
+                    {st?.lastCommit ? (
+                      <div className="repo-card-commit muted" title={st.lastCommit}>
+                        <span className="commit-subject">{st.lastCommit}</span>
+                        {st.lastCommitAt ? (
+                          <span> · {st.lastCommitAt}</span>
+                        ) : null}
                       </div>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+                    ) : null}
+                  </div>
+
+                  <div className="repo-card-branch">
+                    <label className="repo-branch-label muted">Branch</label>
+                    <select
+                      className="repo-branch-select"
+                      value={st?.currentBranch ?? ""}
+                      disabled={
+                        busy ||
+                        (!branchesReady && repoBranches.length === 0) ||
+                        !!st?.error
+                      }
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        if (v && v !== st?.currentBranch) {
+                          void onCheckout(repo.id, v);
+                        }
+                      }}
+                      title={
+                        st?.isDetached
+                          ? "Detached HEAD"
+                          : (st?.currentBranch ?? "Select branch")
+                      }
+                    >
+                      {!st?.currentBranch && (
+                        <option value="">
+                          {st?.isDetached ? "detached…" : "Select…"}
+                        </option>
+                      )}
+                      {st?.currentBranch &&
+                        !repoBranches.includes(st.currentBranch) && (
+                          <option value={st.currentBranch}>
+                            {st.currentBranch}
+                            {st.isDetached ? " (detached)" : ""}
+                          </option>
+                        )}
+                      {repoBranches.map((b) => (
+                        <option key={b} value={b}>
+                          {b}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                <div className="repo-card-actions">
+                  <div className="repo-actions-primary">
+                    <button
+                      className="btn btn-sm"
+                      disabled={busy}
+                      onClick={() =>
+                        void runRepoOp(repo.id, "Fetch", fetchRepo)
+                      }
+                    >
+                      {thisBusy ? "…" : "Fetch"}
+                    </button>
+                    <button
+                      className="btn btn-sm"
+                      disabled={busy}
+                      onClick={() => void runRepoOp(repo.id, "Pull", pullRepo)}
+                    >
+                      Pull
+                    </button>
+                    <button
+                      className="btn btn-sm"
+                      disabled={busy}
+                      onClick={() => void runRepoOp(repo.id, "Push", pushRepo)}
+                    >
+                      Push
+                    </button>
+                    <button
+                      className="btn btn-sm"
+                      disabled={busy || !st?.isDirty}
+                      title="Stage / unstage / commit"
+                      onClick={() => void openCommit(repo.id, repo.name)}
+                    >
+                      Stage
+                    </button>
+                  </div>
+                  <div className="repo-actions-secondary">
+                    <button
+                      className="btn btn-sm btn-ghost"
+                      disabled={busy}
+                      onClick={() => void openHistory(repo.id, repo.name)}
+                    >
+                      History
+                    </button>
+                    <button
+                      className="btn btn-sm btn-ghost"
+                      disabled={busy}
+                      onClick={() => void openBranches(repo.id, repo.name)}
+                    >
+                      Branches
+                    </button>
+                    <button
+                      className="btn btn-sm btn-ghost"
+                      disabled={busy}
+                      onClick={() => void onOpenFolder(repo.id)}
+                    >
+                      Folder
+                    </button>
+                    <button
+                      className="btn btn-sm btn-danger"
+                      disabled={busy}
+                      onClick={() => void onRemove(repo.id, repo.name)}
+                    >
+                      Remove
+                    </button>
+                  </div>
+                </div>
+              </article>
+            );
+          })}
         </div>
       )}
 
@@ -902,6 +987,15 @@ export function ProjectDetail() {
                 >
                   Unstage all
                 </button>
+                <button
+                  type="button"
+                  className="btn btn-sm btn-danger"
+                  disabled={commitBusy || selectedPaths.size === 0}
+                  title="Restore selected files to HEAD / delete untracked"
+                  onClick={() => void onDiscardSelected()}
+                >
+                  Discard selected
+                </button>
               </div>
 
               {changedFiles.length === 0 ? (
@@ -955,16 +1049,44 @@ export function ProjectDetail() {
                             >
                               {f.path}
                             </button>
-                            {f.staged && !f.unstaged && (
-                              <span className="badge ok">staged</span>
-                            )}
-                            {f.staged && f.unstaged && (
-                              <span className="badge warn">partial</span>
-                            )}
-                            {!f.staged && f.unstaged && (
-                              <span className="badge warn">unstaged</span>
-                            )}
                           </label>
+                          <div className="file-row-btns">
+                            {f.unstaged && (
+                              <button
+                                type="button"
+                                className="btn btn-sm"
+                                disabled={commitBusy}
+                                title="Stage this file"
+                                onClick={() =>
+                                  void applyStagePaths([f.path], "Staged")
+                                }
+                              >
+                                Stage
+                              </button>
+                            )}
+                            {f.staged && (
+                              <button
+                                type="button"
+                                className="btn btn-sm"
+                                disabled={commitBusy}
+                                title="Unstage this file"
+                                onClick={() =>
+                                  void applyUnstagePaths([f.path], "Unstaged")
+                                }
+                              >
+                                Unstage
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              className="btn btn-sm btn-danger"
+                              disabled={commitBusy}
+                              title="Discard changes to this file"
+                              onClick={() => void discardPaths([f.path])}
+                            >
+                              Discard
+                            </button>
+                          </div>
                         </div>
                       );
                     })}

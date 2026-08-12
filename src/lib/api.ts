@@ -185,6 +185,14 @@ export async function unstageFiles(
   return invoke("unstage_files", { repoId, paths });
 }
 
+/** Discard local changes for paths (tracked → HEAD; untracked deleted). */
+export async function discardFiles(
+  repoId: string,
+  paths: string[],
+): Promise<ChangedFile[]> {
+  return invoke("discard_files", { repoId, paths });
+}
+
 export async function commitRepo(
   repoId: string,
   message: string,
@@ -214,8 +222,14 @@ export async function getRepoPath(repoId: string): Promise<string> {
 
 export async function openRepoFolder(repoId: string): Promise<void> {
   const path = await getRepoPath(repoId);
-  const { openPath } = await import("@tauri-apps/plugin-opener");
-  await openPath(path);
+  const opener = await import("@tauri-apps/plugin-opener");
+  try {
+    // Open directory in file manager
+    await opener.openPath(path);
+  } catch {
+    // Fallback: reveal path (some platforms prefer this)
+    await opener.revealItemInDir(path);
+  }
 }
 
 export async function createBranch(

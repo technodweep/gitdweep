@@ -1,0 +1,95 @@
+# Diagnostic run summary
+Date: 2026-08-11 (scheduled one-shot task 019ff0932dcc)
+Workspace: /home/sandeep/Documents/projects/technodweep/gitGUI1
+Scheduled task: CANCELLED after this run (scheduler_delete 019ff0932dcc)
+
+## CRITICAL: Shell tools could not execute
+
+All attempts to run shell commands failed before any diagnostic command started.
+The agent terminal runner always invokes:
+
+```
+/bin/bash -lc '<command>'
+```
+
+and that spawn fails with:
+
+```
+Terminal error: IO Error: failed to spawn `/bin/bash -lc '...'`: No such file or directory (os error 2)
+```
+
+Also failed: subagent launch (task not found after spawn), monitor spawn, workflow agent() (workflow failed: Function not found: agent).
+
+### Reproduced with
+1. Full PATH setup (fnm node v22.23.2 + cargo) + cargo check — spawn failed
+2. npx tsc --noEmit — spawn failed
+3. Minimal `echo hello` / `true` — spawn failed
+4. monitor with `/bin/bash -c` — spawn failed (same ENOENT wrapper)
+
+### Filesystem checks (non-shell tools only)
+| Item | Status |
+|------|--------|
+| `/bin/bash` / `/usr/bin/bash` | Present on FS (list_dir) |
+| Node v22.23.2 (fnm) | Present: `~/.local/share/fnm/node-versions/v22.23.2/installation/bin/` (node, npm, npx, corepack) |
+| Cargo toolchain | Present: `~/.cargo/bin/` (cargo, rustc, rustup, …) |
+| Project `node_modules/` | Present |
+| `package.json` script `tauri:dev` | Present (`WEBKIT_DISABLE_*` + `tauri dev`) |
+| Prior Rust debug build | Present under `src-tauri/target/` |
+
+Interpretation: agent/runtime **process exec** is broken (ENOENT on bash spawn). File read/list/write tools work. This is **not** a missing project toolchain and does **not** prove cargo/tsc/tauri compile success or failure.
+
+## Command results
+
+### 1. cargo check --manifest-path src-tauri/Cargo.toml
+- **Status:** NOT RUN
+- **Exit code:** n/a
+- **Log file:** cargo-check-capture.log — **NOT written**
+- **Errors:** none captured (command never executed)
+
+### 2. npx tsc --noEmit
+- **Status:** NOT RUN
+- **Exit code:** n/a
+- **Log file:** tsc-capture.log — **NOT written**
+- **Errors:** none captured (command never executed)
+
+### 3. (timeout 120 npm run tauri:dev || true)
+- **Status:** NOT RUN
+- **Exit code:** n/a
+- **Log file:** tauri-dev-capture.log — **NOT written**
+- **Errors:** none captured (command never executed)
+
+## Log files written?
+| File | Written? |
+|------|----------|
+| cargo-check-capture.log | NO |
+| tsc-capture.log | NO |
+| tauri-dev-capture.log | NO |
+| run-summary.txt | YES (this file) |
+| run-diagnostics.sh | YES (helper for interactive re-run) |
+
+## How to complete diagnostics (interactive shell with working spawn)
+
+```bash
+cd /home/sandeep/Documents/projects/technodweep/gitGUI1
+chmod +x run-diagnostics.sh
+./run-diagnostics.sh
+```
+
+Or manually:
+
+```bash
+export PATH="/home/sandeep/.local/share/fnm/node-versions/v22.23.2/installation/bin:/home/sandeep/.cargo/bin:$PATH"
+cd /home/sandeep/Documents/projects/technodweep/gitGUI1
+
+cargo check --manifest-path src-tauri/Cargo.toml 2>&1 | tee cargo-check-capture.log
+npx tsc --noEmit 2>&1 | tee tsc-capture.log
+(timeout 120 npm run tauri:dev || true) 2>&1 | tee tauri-dev-capture.log
+```
+
+Then refresh this summary from the three `*-capture.log` files.
+
+## Attention for main agent
+1. **Runtime bug:** shell/exec is unavailable in this agent session — fix spawn of `/bin/bash` (or point runner at a working shell).
+2. **No project compile signal:** cargo/tsc/tauri diagnostics were not run; cannot report real build errors.
+3. **Scheduled task 019ff0932dcc deleted** — will not re-fire every minute.
+4. Re-run diagnostics from a session with working shell via `./run-diagnostics.sh`.

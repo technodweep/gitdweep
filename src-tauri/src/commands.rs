@@ -658,6 +658,21 @@ pub fn unstage_files(
     git::list_changed_files(&repo.path)
 }
 
+/// Discard working-tree + index changes for selected paths (cannot be undone).
+#[tauri::command]
+pub fn discard_files(
+    state: State<'_, AppState>,
+    repo_id: String,
+    paths: Vec<String>,
+) -> Result<Vec<ChangedFile>, String> {
+    let repo = state.db.get_repo(&repo_id)?;
+    if paths.is_empty() {
+        return Err("No files selected to discard".into());
+    }
+    git::discard_paths(&repo.path, &paths)?;
+    git::list_changed_files(&repo.path)
+}
+
 #[tauri::command]
 pub fn commit_repo(
     state: State<'_, AppState>,

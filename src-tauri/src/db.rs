@@ -35,13 +35,16 @@ impl Db {
                 updated_at INTEGER NOT NULL
             );
 
+            -- Same filesystem path may appear in multiple projects.
+            -- Uniqueness is per project only: UNIQUE(project_id, path).
             CREATE TABLE IF NOT EXISTS repos (
                 id TEXT PRIMARY KEY,
                 project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-                path TEXT NOT NULL UNIQUE,
+                path TEXT NOT NULL,
                 name TEXT NOT NULL,
                 enabled INTEGER NOT NULL DEFAULT 1,
-                created_at INTEGER NOT NULL
+                created_at INTEGER NOT NULL,
+                UNIQUE(project_id, path)
             );
 
             CREATE TABLE IF NOT EXISTS environments (
@@ -63,7 +66,96 @@ impl Db {
                 key TEXT PRIMARY KEY,
                 value TEXT NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS schema_meta (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );
             "#,
+        )
+        .map_err(|e| e.to_string())?;
+
+        // Upgrade older DBs that enforced global UNIQUE on repos.path
+        Self::migrate_repos_allow_shared_paths(&conn)?;
+        Ok(())
+    }
+
+    /// Recreate `repos` if it still has a global UNIQUE on `path`.
+    fn migrate_repos_allow_shared_paths(conn: &Connection) -> Result<(), String> {
+        let version: Option<String> = conn
+            .query_row(
+                "SELECT value FROM schema_meta WHERE key = 'repos_shared_paths'",
+                [],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|e| e.to_string())?;
+        if version.as_deref() == Some("1") {
+            return Ok(());
+        }
+
+        let create_sql: Option<String> = conn
+            .query_row(
+                "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'repos'",
+                [],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|e| e.to_string())?;
+
+        let needs_rebuild = match create_sql {
+            None => false,
+            Some(sql) => {
+                let lower = sql.to_lowercase();
+                // Old schema: "path TEXT NOT NULL UNIQUE" without project-scoped unique
+                lower.contains("path text not null unique")
+                    || (lower.contains("path text not null")
+                        && !lower.contains("unique(project_id, path)"))
+            }
+        };
+
+        if needs_rebuild {
+            // Step-by-step (avoid nested-transaction issues with execute_batch + BEGIN)
+            conn.execute_batch("PRAGMA foreign_keys = OFF;")
+                .map_err(|e| format!("migrate repos: {e}"))?;
+            conn.execute_batch(
+                r#"
+                CREATE TABLE IF NOT EXISTS repos_new (
+                    id TEXT PRIMARY KEY,
+                    project_id TEXT NOT NULL,
+                    path TEXT NOT NULL,
+                    name TEXT NOT NULL,
+                    enabled INTEGER NOT NULL DEFAULT 1,
+                    created_at INTEGER NOT NULL,
+                    UNIQUE(project_id, path)
+                );
+                "#,
+            )
+            .map_err(|e| format!("migrate repos create: {e}"))?;
+            // Clear temp table if a previous migration left it around
+            let _ = conn.execute("DELETE FROM repos_new", []);
+            conn.execute(
+                r#"
+                INSERT INTO repos_new (id, project_id, path, name, enabled, created_at)
+                    SELECT id, project_id, path, name, enabled, created_at FROM repos
+                "#,
+                [],
+            )
+            .map_err(|e| format!("migrate repos copy: {e}"))?;
+            conn.execute("DROP TABLE repos", [])
+                .map_err(|e| format!("migrate repos drop: {e}"))?;
+            conn.execute("ALTER TABLE repos_new RENAME TO repos", [])
+                .map_err(|e| format!("migrate repos rename: {e}"))?;
+            conn.execute_batch("PRAGMA foreign_keys = ON;")
+                .map_err(|e| format!("migrate repos fk on: {e}"))?;
+        }
+
+        conn.execute(
+            r#"
+            INSERT INTO schema_meta (key, value) VALUES ('repos_shared_paths', '1')
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value
+            "#,
+            [],
         )
         .map_err(|e| e.to_string())?;
         Ok(())
@@ -167,7 +259,7 @@ impl Db {
             )
             .map_err(|e| {
                 if e.to_string().contains("UNIQUE") {
-                    format!("Repo path already exists: {path}")
+                    format!("Repo already in this project: {path}")
                 } else {
                     e.to_string()
                 }
@@ -240,7 +332,7 @@ impl Db {
         )
         .map_err(|e| {
             if e.to_string().contains("UNIQUE") {
-                format!("Repo path already exists: {path}")
+                format!("Repo already in this project: {path}")
             } else {
                 e.to_string()
             }

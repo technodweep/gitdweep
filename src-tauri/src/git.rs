@@ -241,41 +241,86 @@ pub fn change_summary(path: &str) -> Result<String, String> {
     ))
 }
 
+/// Parse `git diff --name-status` lines into (status_letter, path).
+fn parse_name_status(out: &str) -> Vec<(String, String)> {
+    let mut items = Vec::new();
+    for line in out.lines() {
+        let line = line.trim_end_matches('\r');
+        if line.is_empty() {
+            continue;
+        }
+        // Formats: "M\tpath", "A\tpath", "R100\told\tnew", "C050\told\tnew"
+        let mut parts = line.split('\t');
+        let code = parts.next().unwrap_or("").trim();
+        if code.is_empty() {
+            continue;
+        }
+        let status = code.chars().next().unwrap_or('M').to_string();
+        // For rename/copy, last field is the new path
+        let paths: Vec<&str> = parts.collect();
+        let file_path = paths
+            .last()
+            .map(|s| s.trim().trim_matches('"').to_string())
+            .unwrap_or_default();
+        if file_path.is_empty() {
+            continue;
+        }
+        items.push((status, file_path));
+    }
+    items
+}
+
 pub fn list_changed_files(path: &str) -> Result<Vec<crate::models::ChangedFile>, String> {
     use crate::models::ChangedFile;
+    use std::collections::BTreeMap;
     let p = Path::new(path);
-    let porcelain = run_git(p, &["status", "--porcelain", "-u"])?;
-    if porcelain.is_empty() {
-        return Ok(Vec::new());
+
+    // Independent lists — avoids porcelain "XY" column bugs (e.g. first row wrong).
+    let staged_items = parse_name_status(
+        &run_git(p, &["diff", "--cached", "--name-status"]).unwrap_or_default(),
+    );
+    let unstaged_items =
+        parse_name_status(&run_git(p, &["diff", "--name-status"]).unwrap_or_default());
+    let untracked: Vec<String> =
+        run_git(p, &["ls-files", "--others", "--exclude-standard"])
+            .unwrap_or_default()
+            .lines()
+            .map(|l| l.trim().to_string())
+            .filter(|l| !l.is_empty())
+            .collect();
+
+    // path -> (staged_letter, unstaged_letter, is_untracked)
+    let mut map: BTreeMap<String, (Option<char>, Option<char>, bool)> = BTreeMap::new();
+
+    for (st, file_path) in staged_items {
+        let ch = st.chars().next().unwrap_or('M');
+        let e = map.entry(file_path).or_insert((None, None, false));
+        e.0 = Some(ch);
+    }
+    for (st, file_path) in unstaged_items {
+        let ch = st.chars().next().unwrap_or('M');
+        let e = map.entry(file_path).or_insert((None, None, false));
+        e.1 = Some(ch);
+    }
+    for file_path in untracked {
+        let e = map.entry(file_path).or_insert((None, None, false));
+        e.2 = true;
+        e.1 = Some('?');
     }
 
     let mut out = Vec::new();
-    for line in porcelain.lines() {
-        if line.len() < 3 {
-            continue;
-        }
-        let x = line.chars().next().unwrap_or(' ');
-        let y = line.chars().nth(1).unwrap_or(' ');
-        // path starts after "XY "
-        let rest = line[2..].trim_start();
-        // renames: "old -> new"
-        let file_path = if let Some(idx) = rest.find(" -> ") {
-            rest[idx + 4..].to_string()
-        } else {
-            // quoted paths
-            rest.trim_matches('"').to_string()
-        };
-
-        let staged = x != ' ' && x != '?';
-        let unstaged = y != ' ' || x == '?';
-        let status = if x == '?' || y == '?' {
+    for (file_path, (staged_ch, unstaged_ch, is_untracked)) in map {
+        let staged = staged_ch.is_some();
+        let unstaged = unstaged_ch.is_some() || is_untracked;
+        let status = if is_untracked {
             "?".into()
-        } else if x != ' ' && x != '?' {
-            x.to_string()
+        } else if let Some(c) = unstaged_ch {
+            c.to_string()
+        } else if let Some(c) = staged_ch {
+            c.to_string()
         } else {
-            y.to_string()
+            "M".into()
         };
-
         out.push(ChangedFile {
             path: file_path,
             status,
@@ -329,6 +374,78 @@ pub fn unstage_all(path: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Discard local changes for paths (destructive).
+/// - Tracked: restore index + worktree from HEAD
+/// - Untracked: `git clean -f -- path`
+pub fn discard_paths(path: &str, paths: &[String]) -> Result<String, String> {
+    let p = Path::new(path);
+    if paths.is_empty() {
+        return Err("No files selected".into());
+    }
+
+    let changed = list_changed_files(path).unwrap_or_default();
+    let by_path: std::collections::HashMap<String, crate::models::ChangedFile> = changed
+        .into_iter()
+        .map(|f| (f.path.clone(), f))
+        .collect();
+
+    let mut tracked: Vec<String> = Vec::new();
+    let mut untracked: Vec<String> = Vec::new();
+
+    for pathspec in paths {
+        match by_path.get(pathspec) {
+            Some(f) if f.status == "?" || f.status == "??" => {
+                untracked.push(pathspec.clone());
+            }
+            Some(_) => tracked.push(pathspec.clone()),
+            // Not in status list — try restore anyway if exists under repo
+            None => {
+                if p.join(pathspec).exists() {
+                    // If file is untracked it might still show as ?
+                    // Prefer clean for unknown new files
+                    let porcelain =
+                        run_git(p, &["status", "--porcelain", "--", pathspec]).unwrap_or_default();
+                    if porcelain.contains("??") || porcelain.starts_with("??") {
+                        untracked.push(pathspec.clone());
+                    } else {
+                        tracked.push(pathspec.clone());
+                    }
+                } else {
+                    // deleted file in worktree — restore from HEAD
+                    tracked.push(pathspec.clone());
+                }
+            }
+        }
+    }
+
+    if !tracked.is_empty() {
+        let mut args = vec![
+            "restore".to_string(),
+            "--source=HEAD".to_string(),
+            "--staged".to_string(),
+            "--worktree".to_string(),
+            "--".to_string(),
+        ];
+        args.extend(tracked.iter().cloned());
+        let args_ref: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+        run_git(p, &args_ref)?;
+    }
+
+    if !untracked.is_empty() {
+        let mut args = vec!["clean".to_string(), "-f".to_string(), "--".to_string()];
+        args.extend(untracked.iter().cloned());
+        let args_ref: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+        run_git(p, &args_ref)?;
+    }
+
+    Ok(format!(
+        "Discarded {} path(s) ({} tracked, {} untracked)",
+        paths.len(),
+        tracked.len(),
+        untracked.len()
+    ))
+}
+
 /// Stage all, selected paths, or nothing; then commit.
 pub fn commit_all(
     path: &str,
@@ -367,7 +484,8 @@ pub fn commit_log(path: &str, limit: usize) -> Result<Vec<crate::models::CommitL
             &format!("-{n}"),
             "--format=%H%x1f%h%x1f%s%x1f%an%x1f%cr",
         ],
-    )?;
+    )
+    .map_err(|e| friendly_git_error(&e))?;
     if out.is_empty() {
         return Ok(Vec::new());
     }
@@ -386,6 +504,26 @@ pub fn commit_log(path: &str, limit: usize) -> Result<Vec<crate::models::CommitL
         });
     }
     Ok(entries)
+}
+
+fn friendly_git_error(err: &str) -> String {
+    let lower = err.to_lowercase();
+    if lower.contains("empty") && lower.contains("object")
+        || lower.contains("bad object")
+        || lower.contains("corrupt")
+    {
+        format!(
+            "This repository looks corrupted (bad/empty git object).\n\n{err}\n\n\
+Try in a terminal:\n\
+  cd <repo>\n\
+  git fsck\n\
+  # if HEAD is broken and you have no important commits yet:\n\
+  #   rm -rf .git && git init\n\
+  # or re-clone the remote."
+        )
+    } else {
+        err.to_string()
+    }
 }
 
 /// Create a local branch; optionally check it out.
