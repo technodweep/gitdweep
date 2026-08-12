@@ -197,4 +197,10 @@ pub struct CommitLogEntry {
     pub subject: String,
     pub author: String,
     pub when: String,
+    /// Parent commit hashes (full), first parent is primary line
+    #[serde(default)]
+    pub parents: Vec<String>,
+    /// Branch/tag decorations e.g. HEAD -> master, origin/main
+    #[serde(default)]
+    pub refs: Vec<String>,
 }

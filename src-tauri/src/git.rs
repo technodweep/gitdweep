@@ -475,14 +475,17 @@ pub fn commit_all(
 pub fn commit_log(path: &str, limit: usize) -> Result<Vec<crate::models::CommitLogEntry>, String> {
     use crate::models::CommitLogEntry;
     let p = Path::new(path);
-    let n = limit.clamp(1, 200).to_string();
-    // unit separator between fields
+    let n = limit.clamp(1, 300).to_string();
+    // Include all branches for a SourceTree-like graph; parents for lane layout.
+    // Fields: hash, short, subject, author, relative date, parents, decorations
     let out = run_git(
         p,
         &[
             "log",
+            "--all",
+            "--topo-order",
             &format!("-{n}"),
-            "--format=%H%x1f%h%x1f%s%x1f%an%x1f%cr",
+            "--format=%H%x1f%h%x1f%s%x1f%an%x1f%cr%x1f%P%x1f%D",
         ],
     )
     .map_err(|e| friendly_git_error(&e))?;
@@ -495,12 +498,33 @@ pub fn commit_log(path: &str, limit: usize) -> Result<Vec<crate::models::CommitL
         if parts.len() < 5 {
             continue;
         }
+        let parents: Vec<String> = parts
+            .get(5)
+            .unwrap_or(&"")
+            .split_whitespace()
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string())
+            .collect();
+        let refs: Vec<String> = parts
+            .get(6)
+            .unwrap_or(&"")
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .map(|s| {
+                // Normalize "HEAD -> master" / "origin/main" / "tag: v1"
+                s.replace("HEAD -> ", "HEAD→")
+                    .replace("tag: ", "")
+            })
+            .collect();
         entries.push(CommitLogEntry {
             hash: parts[0].to_string(),
             short_hash: parts[1].to_string(),
             subject: parts[2].to_string(),
             author: parts[3].to_string(),
             when: parts[4].to_string(),
+            parents,
+            refs,
         });
     }
     Ok(entries)

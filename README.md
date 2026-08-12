@@ -8,7 +8,8 @@ Built with **Tauri 2 + React + TypeScript**.
 
 - **Projects** — add a workspace from a folder scan and/or manual repo paths
   (the same repo folder can belong to **multiple projects**)
-- **Repos** — branch, dirty state, ahead/behind, last commit; enable/disable
+- **Repos** — **List** or **Tabs** view (tabs show commits + working tree / untracked);
+  branch, dirty, ahead/behind; enable/disable
 - **Fetch all / Pull all / Push all** — batch ops on enabled repos
   (`fetch --all --prune`, `pull --ff-only`, `push` with auto `-u origin` if needed)
 - **Per-repo actions** — Fetch / Pull / Push / **Stage** (stage/unstage/**discard**/commit + **diff**) /

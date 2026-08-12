@@ -336,6 +336,326 @@ a:hover {
   gap: 0.35rem;
 }
 
+/* —— List / Tabs view toggle —— */
+.view-mode-toggle {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.view-mode-btn {
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  padding: 0.4rem 0.75rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.view-mode-btn:hover {
+  color: var(--text);
+  background: var(--bg-hover);
+}
+
+.view-mode-btn.active {
+  background: color-mix(in srgb, var(--accent) 28%, transparent);
+  color: var(--text);
+}
+
+/* —— Tabbed repo detail —— */
+.repo-tabs-view {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: var(--bg-elevated);
+  min-height: 420px;
+}
+
+.repo-tabs-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.2rem;
+  padding: 0.45rem 0.5rem;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+  max-height: 9rem;
+  overflow-y: auto;
+}
+
+.repo-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-muted);
+  border-radius: 8px;
+  padding: 0.4rem 0.7rem;
+  cursor: pointer;
+  font-size: 0.88rem;
+  max-width: 12rem;
+}
+
+.repo-tab:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.repo-tab.active {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
+  color: var(--text);
+  font-weight: 600;
+}
+
+.repo-tab.disabled {
+  opacity: 0.55;
+}
+
+.repo-tab-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.repo-tab-dot {
+  width: 0.45rem;
+  height: 0.45rem;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.repo-tab-dot.clean {
+  background: var(--success);
+}
+
+.repo-tab-dot.dirty {
+  background: var(--warning);
+}
+
+.repo-tab-dot.error {
+  background: var(--danger);
+}
+
+.repo-tab-panel {
+  padding: 1rem 1.1rem 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+}
+
+.repo-tab-header {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 1rem;
+  align-items: flex-start;
+}
+
+.repo-tab-header-main {
+  min-width: 0;
+  flex: 1;
+}
+
+.repo-tab-header-side {
+  min-width: 160px;
+  max-width: 220px;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.repo-tab-columns {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.85rem;
+  min-height: 280px;
+}
+
+@media (max-width: 900px) {
+  .repo-tab-columns {
+    grid-template-columns: 1fr;
+  }
+}
+
+.repo-tab-section {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg);
+  padding: 0.75rem 0.85rem;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  max-height: min(55vh, 480px);
+}
+
+.repo-tab-section-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 0.5rem;
+  margin-bottom: 0.55rem;
+}
+
+.repo-tab-section-head h3 {
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+.tab-file-list,
+.tab-commit-list {
+  overflow: auto;
+  flex: 1;
+  min-height: 0;
+}
+
+.tab-file-row,
+.tab-commit-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  padding: 0.4rem 0.15rem;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+  font-size: 0.88rem;
+}
+
+.tab-file-row:last-child,
+.tab-commit-row:last-child {
+  border-bottom: none;
+}
+
+.tab-commit-row .history-hash {
+  margin-top: 0.15rem;
+}
+
+/* —— SourceTree-like commit graph —— */
+.commit-graph {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1;
+}
+
+.commit-graph-scroll {
+  overflow: auto;
+  max-height: min(55vh, 520px);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: #0b0d11;
+}
+
+.history-graph-wrap .commit-graph-scroll {
+  max-height: min(50vh, 480px);
+}
+
+.tab-commit-graph-wrap {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1;
+}
+
+.tab-commit-graph-wrap .commit-graph-scroll {
+  max-height: min(45vh, 400px);
+}
+
+.commit-graph-inner {
+  position: relative;
+  display: flex;
+}
+
+.commit-graph-svg {
+  position: absolute;
+  left: 0;
+  top: 0;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.commit-graph-rows {
+  position: relative;
+  z-index: 2;
+  flex: 1;
+  min-width: 0;
+  width: 100%;
+}
+
+.commit-graph-row {
+  display: flex;
+  align-items: flex-start;
+  cursor: default;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
+  padding-right: 0.5rem;
+}
+
+.commit-graph-row:hover {
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
+.commit-graph-row.selected {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+.commit-graph-spacer {
+  flex-shrink: 0;
+}
+
+.commit-graph-body {
+  flex: 1;
+  min-width: 0;
+  padding: 0.35rem 0.5rem 0.35rem 0.25rem;
+}
+
+.commit-graph-subject-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.4rem 0.55rem;
+}
+
+.commit-graph-subject {
+  font-size: 0.9rem;
+  font-weight: 500;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+
+.commit-graph-meta {
+  font-size: 0.78rem;
+  margin-top: 0.1rem;
+}
+
+.commit-graph-actions {
+  margin-top: 0.25rem;
+}
+
+.commit-ref-badge {
+  display: inline-block;
+  font-size: 0.68rem;
+  font-weight: 650;
+  padding: 0.08rem 0.4rem;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--border));
+  color: #c5d8ff;
+  max-width: 10rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.modal-wide.history-modal {
+  width: min(920px, 100%);
+}
+
 .page-header .actions {
   max-width: 100%;
 }

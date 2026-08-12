@@ -38,8 +38,12 @@ import type {
 } from "../lib/types";
 import { Toast } from "../components/Toast";
 import { DiffView } from "../components/DiffView";
+import { CommitGraph } from "../components/CommitGraph";
 
 type BatchKind = "pull" | "fetch" | "push";
+type RepoViewMode = "list" | "tabs";
+
+const VIEW_MODE_KEY = "git-workspace.repoViewMode";
 
 export function ProjectDetail() {
   const { projectId = "" } = useParams();
@@ -54,6 +58,21 @@ export function ProjectDetail() {
     kind: BatchKind;
     items: PullResult[];
   } | null>(null);
+
+  // List vs tabbed repo detail
+  const [viewMode, setViewMode] = useState<RepoViewMode>(() => {
+    try {
+      const v = localStorage.getItem(VIEW_MODE_KEY);
+      return v === "tabs" ? "tabs" : "list";
+    } catch {
+      return "list";
+    }
+  });
+  const [activeTabId, setActiveTabId] = useState<string | null>(null);
+  const [tabCommits, setTabCommits] = useState<CommitLogEntry[]>([]);
+  const [tabFiles, setTabFiles] = useState<ChangedFile[]>([]);
+  const [tabDetailLoading, setTabDetailLoading] = useState(false);
+  const [tabDetailError, setTabDetailError] = useState<string | null>(null);
 
   // Commit modal
   const [commitRepoId, setCommitRepoId] = useState<string | null>(null);
@@ -86,12 +105,46 @@ export function ProjectDetail() {
     null,
   );
 
+  function changeViewMode(mode: RepoViewMode) {
+    setViewMode(mode);
+    try {
+      localStorage.setItem(VIEW_MODE_KEY, mode);
+    } catch {
+      /* ignore */
+    }
+  }
+
+  const loadTabDetail = useCallback(async (repoId: string) => {
+    setTabDetailLoading(true);
+    setTabDetailError(null);
+    try {
+      const [commits, files] = await Promise.all([
+        getCommitLog(repoId, 100),
+        listChangedFiles(repoId),
+      ]);
+      setTabCommits(commits);
+      setTabFiles(files);
+    } catch (e) {
+      setTabCommits([]);
+      setTabFiles([]);
+      setTabDetailError(String(e));
+    } finally {
+      setTabDetailLoading(false);
+    }
+  }, []);
+
   const refresh = useCallback(async () => {
     setLoading(true);
     setBranchesReady(false);
     try {
       const d = await getProject(projectId);
       setDetail(d);
+
+      // Keep active tab valid when repos change
+      setActiveTabId((prev) => {
+        if (prev && d.repos.some((r) => r.id === prev)) return prev;
+        return d.repos[0]?.id ?? null;
+      });
 
       const [st, branchMap] = await Promise.all([
         getProjectRepoStatuses(projectId),
@@ -113,6 +166,13 @@ export function ProjectDetail() {
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  // Load commits + working tree when tab selection / mode changes,
+  // and again after project refresh finishes (loading → false).
+  useEffect(() => {
+    if (viewMode !== "tabs" || !activeTabId || loading) return;
+    void loadTabDetail(activeTabId);
+  }, [viewMode, activeTabId, loadTabDetail, loading]);
 
   async function onCheckout(repoId: string, branch: string) {
     if (!branch) return;
@@ -511,7 +571,7 @@ export function ProjectDetail() {
     setBranchFromHash("");
     setHistoryLoading(true);
     try {
-      const log = await getCommitLog(repoId, 50);
+      const log = await getCommitLog(repoId, 120);
       setHistoryEntries(log);
     } catch (e) {
       setToast({ msg: String(e), error: true });
@@ -651,6 +711,10 @@ export function ProjectDetail() {
   }
 
   const busy = batchBusy !== null || rowBusy !== null;
+  const activeRepo =
+    detail.repos.find((r) => r.id === activeTabId) ?? detail.repos[0] ?? null;
+  const activeSt = activeRepo ? statuses[activeRepo.id] : undefined;
+  const activeBranches = activeRepo ? (branches[activeRepo.id] ?? []) : [];
 
   return (
     <>
@@ -660,6 +724,22 @@ export function ProjectDetail() {
           <p className="mono">{detail.project.rootPath ?? "No root path"}</p>
         </div>
         <div className="actions">
+          <div className="view-mode-toggle" role="group" aria-label="Repo view">
+            <button
+              type="button"
+              className={`view-mode-btn${viewMode === "list" ? " active" : ""}`}
+              onClick={() => changeViewMode("list")}
+            >
+              List
+            </button>
+            <button
+              type="button"
+              className={`view-mode-btn${viewMode === "tabs" ? " active" : ""}`}
+              onClick={() => changeViewMode("tabs")}
+            >
+              Tabs
+            </button>
+          </div>
           <Link className="btn" to={`/projects/${projectId}/environments`}>
             Environments
           </Link>
@@ -745,11 +825,11 @@ export function ProjectDetail() {
             Add a repo
           </button>
         </div>
-      ) : (
+      ) : viewMode === "list" ? (
         <div className="repo-list">
           <div className="repo-list-meta muted">
             {detail.repos.length} repo{detail.repos.length === 1 ? "" : "s"} ·
-            scroll vertically — no horizontal pan needed
+            list view
           </div>
           {detail.repos.map((repo) => {
             const st = statuses[repo.id];
@@ -802,7 +882,10 @@ export function ProjectDetail() {
                       {repo.path}
                     </div>
                     {st?.lastCommit ? (
-                      <div className="repo-card-commit muted" title={st.lastCommit}>
+                      <div
+                        className="repo-card-commit muted"
+                        title={st.lastCommit}
+                      >
                         <span className="commit-subject">{st.lastCommit}</span>
                         {st.lastCommitAt ? (
                           <span> · {st.lastCommitAt}</span>
@@ -827,11 +910,6 @@ export function ProjectDetail() {
                           void onCheckout(repo.id, v);
                         }
                       }}
-                      title={
-                        st?.isDetached
-                          ? "Detached HEAD"
-                          : (st?.currentBranch ?? "Select branch")
-                      }
                     >
                       {!st?.currentBranch && (
                         <option value="">
@@ -922,6 +1000,301 @@ export function ProjectDetail() {
               </article>
             );
           })}
+        </div>
+      ) : (
+        /* —— Tabbed repo detail —— */
+        <div className="repo-tabs-view">
+          <div className="repo-tabs-bar" role="tablist" aria-label="Repositories">
+            {detail.repos.map((repo) => {
+              const st = statuses[repo.id];
+              const selected = (activeTabId ?? detail.repos[0]?.id) === repo.id;
+              return (
+                <button
+                  key={repo.id}
+                  type="button"
+                  role="tab"
+                  aria-selected={selected}
+                  className={`repo-tab${selected ? " active" : ""}${
+                    repo.enabled ? "" : " disabled"
+                  }`}
+                  onClick={() => setActiveTabId(repo.id)}
+                  title={repo.path}
+                >
+                  <span className="repo-tab-name">{repo.name}</span>
+                  {st?.isDirty ? (
+                    <span className="repo-tab-dot dirty" title="Dirty" />
+                  ) : st?.error ? (
+                    <span className="repo-tab-dot error" title="Error" />
+                  ) : (
+                    <span className="repo-tab-dot clean" title="Clean" />
+                  )}
+                </button>
+              );
+            })}
+          </div>
+
+          {activeRepo && (
+            <div className="repo-tab-panel" role="tabpanel">
+              <div className="repo-tab-header">
+                <div className="repo-tab-header-main">
+                  <div className="repo-card-title-row">
+                    <h2 className="repo-card-name">{activeRepo.name}</h2>
+                    <label className="option-check" style={{ margin: 0 }}>
+                      <input
+                        type="checkbox"
+                        checked={activeRepo.enabled}
+                        onChange={(e) =>
+                          void onToggle(activeRepo.id, e.target.checked)
+                        }
+                      />
+                      <span className="muted">Enabled for batch</span>
+                    </label>
+                    {activeSt?.error ? (
+                      <span className="badge err">{activeSt.error}</span>
+                    ) : activeSt?.isDirty ? (
+                      <span className="badge warn">dirty</span>
+                    ) : (
+                      <span className="badge ok">clean</span>
+                    )}
+                    {activeSt?.ahead != null || activeSt?.behind != null ? (
+                      <span
+                        className={
+                          (activeSt.ahead ?? 0) > 0 ||
+                          (activeSt.behind ?? 0) > 0
+                            ? "sync-drift mono"
+                            : "muted mono"
+                        }
+                      >
+                        ↑{activeSt.ahead ?? 0} ↓{activeSt.behind ?? 0}
+                      </span>
+                    ) : null}
+                  </div>
+                  <div className="muted mono" title={activeRepo.path}>
+                    {activeRepo.path}
+                  </div>
+                </div>
+                <div className="repo-tab-header-side">
+                  <label className="repo-branch-label muted">Branch</label>
+                  <select
+                    className="repo-branch-select"
+                    value={activeSt?.currentBranch ?? ""}
+                    disabled={
+                      busy ||
+                      (!branchesReady && activeBranches.length === 0) ||
+                      !!activeSt?.error
+                    }
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      if (v && v !== activeSt?.currentBranch) {
+                        void onCheckout(activeRepo.id, v).then(() =>
+                          loadTabDetail(activeRepo.id),
+                        );
+                      }
+                    }}
+                  >
+                    {!activeSt?.currentBranch && (
+                      <option value="">
+                        {activeSt?.isDetached ? "detached…" : "Select…"}
+                      </option>
+                    )}
+                    {activeSt?.currentBranch &&
+                      !activeBranches.includes(activeSt.currentBranch) && (
+                        <option value={activeSt.currentBranch}>
+                          {activeSt.currentBranch}
+                        </option>
+                      )}
+                    {activeBranches.map((b) => (
+                      <option key={b} value={b}>
+                        {b}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div className="repo-card-actions" style={{ borderTop: "none" }}>
+                <div className="repo-actions-primary">
+                  <button
+                    className="btn btn-sm"
+                    disabled={busy}
+                    onClick={() =>
+                      void runRepoOp(activeRepo.id, "Fetch", fetchRepo).then(
+                        () => loadTabDetail(activeRepo.id),
+                      )
+                    }
+                  >
+                    {rowBusy === activeRepo.id ? "…" : "Fetch"}
+                  </button>
+                  <button
+                    className="btn btn-sm"
+                    disabled={busy}
+                    onClick={() =>
+                      void runRepoOp(activeRepo.id, "Pull", pullRepo).then(
+                        () => loadTabDetail(activeRepo.id),
+                      )
+                    }
+                  >
+                    Pull
+                  </button>
+                  <button
+                    className="btn btn-sm"
+                    disabled={busy}
+                    onClick={() =>
+                      void runRepoOp(activeRepo.id, "Push", pushRepo).then(
+                        () => loadTabDetail(activeRepo.id),
+                      )
+                    }
+                  >
+                    Push
+                  </button>
+                  <button
+                    className="btn btn-sm"
+                    disabled={busy || !activeSt?.isDirty}
+                    onClick={() =>
+                      void openCommit(activeRepo.id, activeRepo.name)
+                    }
+                  >
+                    Stage
+                  </button>
+                  <button
+                    className="btn btn-sm btn-ghost"
+                    disabled={busy}
+                    onClick={() =>
+                      void openBranches(activeRepo.id, activeRepo.name)
+                    }
+                  >
+                    Branches
+                  </button>
+                  <button
+                    className="btn btn-sm btn-ghost"
+                    disabled={busy}
+                    onClick={() => void onOpenFolder(activeRepo.id)}
+                  >
+                    Folder
+                  </button>
+                  <button
+                    className="btn btn-sm"
+                    disabled={busy || tabDetailLoading}
+                    onClick={() => void loadTabDetail(activeRepo.id)}
+                  >
+                    Refresh detail
+                  </button>
+                  <button
+                    className="btn btn-sm btn-danger"
+                    disabled={busy}
+                    onClick={() =>
+                      void onRemove(activeRepo.id, activeRepo.name)
+                    }
+                  >
+                    Remove
+                  </button>
+                </div>
+              </div>
+
+              {tabDetailError && (
+                <div className="card" style={{ borderColor: "var(--danger)" }}>
+                  <span className="badge err">{tabDetailError}</span>
+                </div>
+              )}
+
+              <div className="repo-tab-columns">
+                <section className="repo-tab-section">
+                  <div className="repo-tab-section-head">
+                    <h3>Working tree</h3>
+                    <span className="muted">
+                      {tabFiles.length} change
+                      {tabFiles.length === 1 ? "" : "s"}
+                      {tabFiles.filter((f) => f.status === "?").length > 0
+                        ? ` · ${tabFiles.filter((f) => f.status === "?").length} untracked`
+                        : ""}
+                    </span>
+                  </div>
+                  {tabDetailLoading ? (
+                    <p className="muted">Loading…</p>
+                  ) : tabFiles.length === 0 ? (
+                    <p className="muted">Clean — no modified or untracked files</p>
+                  ) : (
+                    <div className="tab-file-list">
+                      {tabFiles.map((f) => (
+                        <div key={f.path} className="tab-file-row">
+                          <span
+                            className={`file-status mono status-${
+                              f.status === "?"
+                                ? "untracked"
+                                : f.status.toLowerCase()
+                            }`}
+                          >
+                            {f.status === "?"
+                              ? "NEW"
+                              : f.status === "M"
+                                ? "MOD"
+                                : f.status === "A"
+                                  ? "ADD"
+                                  : f.status === "D"
+                                    ? "DEL"
+                                    : f.status}
+                          </span>
+                          <span className="mono file-path" title={f.path}>
+                            {f.path}
+                          </span>
+                          {f.staged && !f.unstaged && (
+                            <span className="badge ok">staged</span>
+                          )}
+                          {!f.staged && f.unstaged && (
+                            <span className="badge warn">
+                              {f.status === "?" ? "untracked" : "unstaged"}
+                            </span>
+                          )}
+                          {f.staged && f.unstaged && (
+                            <span className="badge warn">partial</span>
+                          )}
+                        </div>
+                      ))}
+                      <div className="actions" style={{ marginTop: "0.5rem" }}>
+                        <button
+                          className="btn btn-sm btn-primary"
+                          disabled={!activeSt?.isDirty}
+                          onClick={() =>
+                            void openCommit(activeRepo.id, activeRepo.name)
+                          }
+                        >
+                          Open stage / commit
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </section>
+
+                <section className="repo-tab-section">
+                  <div className="repo-tab-section-head">
+                    <h3>Commits</h3>
+                    <span className="muted">
+                      {tabCommits.length} recent
+                    </span>
+                  </div>
+                  {tabDetailLoading ? (
+                    <p className="muted">Loading…</p>
+                  ) : tabCommits.length === 0 ? (
+                    <p className="muted">No commits</p>
+                  ) : (
+                    <div className="tab-commit-graph-wrap">
+                      <CommitGraph commits={tabCommits} />
+                      <div className="actions" style={{ marginTop: "0.5rem" }}>
+                        <button
+                          className="btn btn-sm"
+                          onClick={() =>
+                            void openHistory(activeRepo.id, activeRepo.name)
+                          }
+                        >
+                          Full history…
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </section>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -1154,7 +1527,7 @@ export function ProjectDetail() {
       {historyRepoId && (
         <div className="modal-backdrop" onClick={() => setHistoryRepoId(null)}>
           <div
-            className="modal modal-wide"
+            className="modal modal-wide history-modal"
             onClick={(e) => e.stopPropagation()}
           >
             <h2>History — {historyName}</h2>
@@ -1174,36 +1547,28 @@ export function ProjectDetail() {
             ) : historyEntries.length === 0 ? (
               <p className="muted">No commits</p>
             ) : (
-              <div className="history-list">
-                {historyEntries.map((e) => (
-                  <div key={e.hash} className="history-row">
-                    <span className="mono history-hash" title={e.hash}>
-                      {e.shortHash}
-                    </span>
-                    <div className="history-body">
-                      <div className="history-subject">{e.subject}</div>
-                      <div className="muted">
-                        {e.author} · {e.when}
-                      </div>
-                      <div className="row-actions" style={{ marginTop: 4 }}>
-                        <button
-                          className="btn btn-sm"
-                          disabled={historyBusy}
-                          onClick={() => void onCheckoutDetached(e.hash)}
-                        >
-                          Detach
-                        </button>
-                        <button
-                          className="btn btn-sm"
-                          disabled={historyBusy || !branchFromHash.trim()}
-                          onClick={() => void onBranchAtCommit(e.hash)}
-                        >
-                          Branch here
-                        </button>
-                      </div>
+              <div className="history-graph-wrap">
+                <CommitGraph
+                  commits={historyEntries}
+                  actions={(e) => (
+                    <div className="row-actions">
+                      <button
+                        className="btn btn-sm"
+                        disabled={historyBusy}
+                        onClick={() => void onCheckoutDetached(e.hash)}
+                      >
+                        Detach
+                      </button>
+                      <button
+                        className="btn btn-sm"
+                        disabled={historyBusy || !branchFromHash.trim()}
+                        onClick={() => void onBranchAtCommit(e.hash)}
+                      >
+                        Branch here
+                      </button>
                     </div>
-                  </div>
-                ))}
+                  )}
+                />
               </div>
             )}
             <div className="actions" style={{ justifyContent: "flex-end" }}>

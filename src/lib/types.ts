@@ -127,4 +127,8 @@ export interface CommitLogEntry {
   subject: string;
   author: string;
   when: string;
+  /** Parent full hashes; first parent is the primary line */
+  parents?: string[];
+  /** Branch / tag labels from git decorations */
+  refs?: string[];
 }
