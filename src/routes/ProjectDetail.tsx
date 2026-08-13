@@ -30,6 +30,7 @@ import {
   unstageFiles,
 } from "../lib/api";
 import type {
+  BranchInfo,
   ChangedFile,
   CommitLogEntry,
   ProjectDetail as ProjectDetailType,
@@ -49,7 +50,7 @@ export function ProjectDetail() {
   const { projectId = "" } = useParams();
   const [detail, setDetail] = useState<ProjectDetailType | null>(null);
   const [statuses, setStatuses] = useState<Record<string, RepoStatus>>({});
-  const [branches, setBranches] = useState<Record<string, string[]>>({});
+  const [branches, setBranches] = useState<Record<string, BranchInfo[]>>({});
   const [branchesReady, setBranchesReady] = useState(false);
   const [loading, setLoading] = useState(true);
   const [batchBusy, setBatchBusy] = useState<BatchKind | null>(null);
@@ -96,7 +97,7 @@ export function ProjectDetail() {
   // Branch modal
   const [branchRepoId, setBranchRepoId] = useState<string | null>(null);
   const [branchRepoName, setBranchRepoName] = useState("");
-  const [branchList, setBranchList] = useState<string[]>([]);
+  const [branchList, setBranchList] = useState<BranchInfo[]>([]);
   const [newBranchName, setNewBranchName] = useState("");
   const [checkoutNew, setCheckoutNew] = useState(true);
   const [branchBusy, setBranchBusy] = useState(false);
@@ -917,17 +918,33 @@ export function ProjectDetail() {
                         </option>
                       )}
                       {st?.currentBranch &&
-                        !repoBranches.includes(st.currentBranch) && (
+                        !repoBranches.some(
+                          (b) =>
+                            b.kind === "local" && b.name === st.currentBranch,
+                        ) && (
                           <option value={st.currentBranch}>
                             {st.currentBranch}
                             {st.isDetached ? " (detached)" : ""}
                           </option>
                         )}
-                      {repoBranches.map((b) => (
-                        <option key={b} value={b}>
-                          {b}
-                        </option>
-                      ))}
+                      <optgroup label="Local">
+                        {repoBranches
+                          .filter((b) => b.kind === "local")
+                          .map((b) => (
+                            <option key={b.name} value={b.name}>
+                              {b.name}
+                            </option>
+                          ))}
+                      </optgroup>
+                      <optgroup label="Remote">
+                        {repoBranches
+                          .filter((b) => b.kind === "remote")
+                          .map((b) => (
+                            <option key={b.name} value={b.name}>
+                              {b.name}
+                            </option>
+                          ))}
+                      </optgroup>
                     </select>
                   </div>
                 </div>
@@ -1098,16 +1115,33 @@ export function ProjectDetail() {
                       </option>
                     )}
                     {activeSt?.currentBranch &&
-                      !activeBranches.includes(activeSt.currentBranch) && (
+                      !activeBranches.some(
+                        (b) =>
+                          b.kind === "local" &&
+                          b.name === activeSt.currentBranch,
+                      ) && (
                         <option value={activeSt.currentBranch}>
                           {activeSt.currentBranch}
                         </option>
                       )}
-                    {activeBranches.map((b) => (
-                      <option key={b} value={b}>
-                        {b}
-                      </option>
-                    ))}
+                    <optgroup label="Local">
+                      {activeBranches
+                        .filter((b) => b.kind === "local")
+                        .map((b) => (
+                          <option key={b.name} value={b.name}>
+                            {b.name}
+                          </option>
+                        ))}
+                    </optgroup>
+                    <optgroup label="Remote">
+                      {activeBranches
+                        .filter((b) => b.kind === "remote")
+                        .map((b) => (
+                          <option key={b.name} value={b.name}>
+                            {b.name}
+                          </option>
+                        ))}
+                    </optgroup>
                   </select>
                 </div>
               </div>
@@ -1609,6 +1643,22 @@ export function ProjectDetail() {
               </label>
               <div className="actions">
                 <button
+                  className="btn"
+                  disabled={branchBusy}
+                  title="Fetch remotes so remote branches appear"
+                  onClick={() => {
+                    if (!branchRepoId) return;
+                    void runRepoOp(branchRepoId, "Fetch", fetchRepo).then(
+                      async () => {
+                        const list = await listBranches(branchRepoId);
+                        setBranchList(list);
+                      },
+                    );
+                  }}
+                >
+                  Fetch remotes
+                </button>
+                <button
                   className="btn btn-primary"
                   disabled={branchBusy || !newBranchName.trim()}
                   onClick={() => void onCreateBranch()}
@@ -1616,42 +1666,112 @@ export function ProjectDetail() {
                   {branchBusy ? "Working…" : "Create branch"}
                 </button>
               </div>
-              <div className="file-list" style={{ maxHeight: 280 }}>
-                {branchList.map((b) => {
-                  const current =
-                    statuses[branchRepoId]?.currentBranch === b;
-                  return (
-                    <div key={b} className="file-row-wrap">
-                      <span className="mono file-path">
-                        {b}
-                        {current ? " ★" : ""}
-                      </span>
-                      <div className="row-actions">
-                        {!current && (
-                          <>
-                            <button
-                              className="btn btn-sm"
-                              disabled={branchBusy}
-                              onClick={() => {
-                                void onCheckout(branchRepoId, b);
-                                setBranchRepoId(null);
-                              }}
-                            >
-                              Checkout
-                            </button>
-                            <button
-                              className="btn btn-sm btn-danger"
-                              disabled={branchBusy}
-                              onClick={() => void onDeleteBranchSafe(b)}
-                            >
-                              Delete
-                            </button>
-                          </>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
+              <div className="branch-modal-sections">
+                <div>
+                  <div className="repo-tab-section-head">
+                    <h3>Local</h3>
+                  </div>
+                  <div className="file-list" style={{ maxHeight: 160 }}>
+                    {branchList.filter((b) => b.kind === "local").length ===
+                    0 ? (
+                      <p className="muted" style={{ padding: "0.5rem" }}>
+                        No local branches
+                      </p>
+                    ) : (
+                      branchList
+                        .filter((b) => b.kind === "local")
+                        .map((b) => {
+                          const current =
+                            statuses[branchRepoId]?.currentBranch === b.name;
+                          return (
+                            <div key={b.name} className="file-row-wrap">
+                              <span className="mono file-path">
+                                {b.name}
+                                {current ? " ★" : ""}
+                              </span>
+                              <div className="row-actions">
+                                {!current && (
+                                  <>
+                                    <button
+                                      className="btn btn-sm"
+                                      disabled={branchBusy}
+                                      onClick={() => {
+                                        void onCheckout(branchRepoId, b.name);
+                                        setBranchRepoId(null);
+                                      }}
+                                    >
+                                      Checkout
+                                    </button>
+                                    <button
+                                      className="btn btn-sm btn-danger"
+                                      disabled={branchBusy}
+                                      onClick={() =>
+                                        void onDeleteBranchSafe(b.name)
+                                      }
+                                    >
+                                      Delete
+                                    </button>
+                                  </>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })
+                    )}
+                  </div>
+                </div>
+                <div>
+                  <div className="repo-tab-section-head">
+                    <h3>Remote</h3>
+                    <span className="muted">checkout creates tracking branch</span>
+                  </div>
+                  <div className="file-list" style={{ maxHeight: 180 }}>
+                    {branchList.filter((b) => b.kind === "remote").length ===
+                    0 ? (
+                      <p className="muted" style={{ padding: "0.5rem" }}>
+                        No remote branches — try Fetch remotes
+                      </p>
+                    ) : (
+                      branchList
+                        .filter((b) => b.kind === "remote")
+                        .map((b) => {
+                          const localExists = branchList.some(
+                            (l) =>
+                              l.kind === "local" && l.name === b.shortName,
+                          );
+                          const current =
+                            statuses[branchRepoId]?.currentBranch ===
+                            b.shortName;
+                          return (
+                            <div key={b.name} className="file-row-wrap">
+                              <span className="mono file-path" title={b.name}>
+                                {b.name}
+                                {current ? " ★" : ""}
+                                {localExists && !current ? (
+                                  <span className="muted"> (has local)</span>
+                                ) : null}
+                              </span>
+                              <div className="row-actions">
+                                {!current && (
+                                  <button
+                                    className="btn btn-sm"
+                                    disabled={branchBusy}
+                                    title={`Checkout ${b.shortName} tracking ${b.name}`}
+                                    onClick={() => {
+                                      void onCheckout(branchRepoId, b.name);
+                                      setBranchRepoId(null);
+                                    }}
+                                  >
+                                    Checkout
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })
+                    )}
+                  </div>
+                </div>
               </div>
               <div className="actions" style={{ justifyContent: "flex-end" }}>
                 <button className="btn" onClick={() => setBranchRepoId(null)}>

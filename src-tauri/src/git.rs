@@ -146,15 +146,53 @@ fn ahead_behind(repo: &Path) -> (Option<i64>, Option<i64>) {
 }
 
 pub fn list_branches(path: &str) -> Result<Vec<String>, String> {
+    Ok(list_all_branches(path)?
+        .into_iter()
+        .filter(|b| b.kind == "local")
+        .map(|b| b.name)
+        .collect())
+}
+
+/// Local + remote-tracking branches for UI (dropdowns, branch manager).
+pub fn list_all_branches(path: &str) -> Result<Vec<crate::models::BranchInfo>, String> {
+    use crate::models::BranchInfo;
     let p = Path::new(path);
-    let out = run_git(p, &["branch", "--format=%(refname:short)"])?;
-    let mut branches: Vec<String> = out
-        .lines()
-        .map(|l| l.trim().to_string())
-        .filter(|l| !l.is_empty())
-        .collect();
-    branches.sort();
-    Ok(branches)
+    let mut out = Vec::new();
+
+    let local = run_git(p, &["branch", "--format=%(refname:short)"])?;
+    for name in local.lines().map(|l| l.trim()).filter(|l| !l.is_empty()) {
+        out.push(BranchInfo {
+            name: name.to_string(),
+            kind: "local".into(),
+            short_name: name.to_string(),
+        });
+    }
+
+    let remote = run_git(p, &["branch", "-r", "--format=%(refname:short)"])?;
+    for name in remote.lines().map(|l| l.trim()).filter(|l| !l.is_empty()) {
+        // Skip symbolic remote HEADs like origin/HEAD
+        if name.ends_with("/HEAD") || name.contains("->") {
+            continue;
+        }
+        let short_name = name
+            .split_once('/')
+            .map(|(_, rest)| rest.to_string())
+            .unwrap_or_else(|| name.to_string());
+        // Skip remotes that already have an identically named local branch
+        // still show them so user can re-checkout / see upstream
+        out.push(BranchInfo {
+            name: name.to_string(),
+            kind: "remote".into(),
+            short_name,
+        });
+    }
+
+    out.sort_by(|a, b| {
+        a.kind
+            .cmp(&b.kind) // local before remote if we sort local < remote... "local" < "remote" ✓
+            .then_with(|| a.name.cmp(&b.name))
+    });
+    Ok(out)
 }
 
 pub fn current_branch(path: &str) -> Result<Option<String>, String> {
@@ -685,7 +723,8 @@ pub struct CheckoutOutcome {
     pub already_on: bool,
 }
 
-/// Checkout branch. If `stash_if_dirty`, stash uncommitted changes first.
+/// Checkout a local branch name, or a remote-tracking ref like `origin/feature`.
+/// Remote refs create/update a local branch tracking that remote.
 pub fn checkout_branch(
     path: &str,
     branch: &str,
@@ -696,10 +735,50 @@ pub fn checkout_branch(
         return Err(format!("Path does not exist: {path}"));
     }
 
+    let branch = branch.trim();
+    if branch.is_empty() {
+        return Err("Branch name is required".into());
+    }
+
+    // Resolve remote-tracking ref → local short name
+    let (local_name, remote_ref) = if run_git(
+        p,
+        &["show-ref", "--verify", &format!("refs/remotes/{branch}")],
+    )
+    .is_ok()
+    {
+        // branch is like "origin/feature"
+        let short = branch
+            .split_once('/')
+            .map(|(_, rest)| rest.to_string())
+            .unwrap_or_else(|| branch.to_string());
+        (short, Some(branch.to_string()))
+    } else if run_git(
+        p,
+        &["show-ref", "--verify", &format!("refs/heads/{branch}")],
+    )
+    .is_ok()
+    {
+        (branch.to_string(), None)
+    } else if run_git(
+        p,
+        &[
+            "show-ref",
+            "--verify",
+            &format!("refs/remotes/origin/{branch}"),
+        ],
+    )
+    .is_ok()
+    {
+        (branch.to_string(), Some(format!("origin/{branch}")))
+    } else {
+        return Err(format!("Branch not found: {branch}"));
+    };
+
     if let Ok(Some(cur)) = current_branch(path) {
-        if cur == branch {
+        if cur == local_name {
             return Ok(CheckoutOutcome {
-                message: format!("Already on {branch}"),
+                message: format!("Already on {local_name}"),
                 stashed: false,
                 already_on: true,
             });
@@ -717,42 +796,36 @@ pub fn checkout_branch(
         }
     }
 
-    // Prefer local branch
-    let local = run_git(p, &["show-ref", "--verify", &format!("refs/heads/{branch}")]);
-    if local.is_ok() {
-        run_git(p, &["checkout", branch])?;
+    if let Some(remote) = remote_ref {
+        let local_exists =
+            run_git(p, &["show-ref", "--verify", &format!("refs/heads/{local_name}")]).is_ok();
+        if local_exists {
+            // Update local branch tip to remote, then check it out
+            run_git(p, &["checkout", "-B", &local_name, &remote])?;
+        } else {
+            // Create local branch tracking the remote
+            run_git(p, &["checkout", "--track", "-b", &local_name, &remote])
+                .or_else(|_| run_git(p, &["checkout", "-b", &local_name, &remote]))?;
+        }
         return Ok(CheckoutOutcome {
             message: if stashed {
-                format!("Stashed changes and switched to {branch}")
+                format!("Stashed changes and checked out {local_name} ← {remote}")
             } else {
-                format!("Switched to {branch}")
+                format!("Checked out {local_name} ← {remote}")
             },
             stashed,
             already_on: false,
         });
     }
 
-    // Try remote tracking branch
-    let remote = run_git(
-        p,
-        &[
-            "show-ref",
-            "--verify",
-            &format!("refs/remotes/origin/{branch}"),
-        ],
-    );
-    if remote.is_ok() {
-        run_git(p, &["checkout", "-B", branch, &format!("origin/{branch}")])?;
-        return Ok(CheckoutOutcome {
-            message: if stashed {
-                format!("Stashed changes and switched to {branch} (tracking origin)")
-            } else {
-                format!("Switched to {branch} (tracking origin)")
-            },
-            stashed,
-            already_on: false,
-        });
-    }
-
-    Err(format!("Branch not found: {branch}"))
+    run_git(p, &["checkout", &local_name])?;
+    Ok(CheckoutOutcome {
+        message: if stashed {
+            format!("Stashed changes and switched to {local_name}")
+        } else {
+            format!("Switched to {local_name}")
+        },
+        stashed,
+        already_on: false,
+    })
 }

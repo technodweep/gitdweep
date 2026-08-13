@@ -121,6 +121,15 @@ export interface ChangedFile {
   unstaged: boolean;
 }
 
+export interface BranchInfo {
+  /** Local short name, or remote ref like `origin/feature` */
+  name: string;
+  /** `"local"` | `"remote"` */
+  kind: string;
+  /** Local name without remote prefix */
+  shortName: string;
+}
+
 export interface CommitLogEntry {
   hash: string;
   shortHash: string;

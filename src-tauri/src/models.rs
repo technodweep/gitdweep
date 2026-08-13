@@ -191,6 +191,17 @@ pub struct ChangedFile {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct BranchInfo {
+    /// Display / checkout ref: local short name, or remote like `origin/feature`
+    pub name: String,
+    /// `"local"` or `"remote"`
+    pub kind: String,
+    /// Local name without remote prefix (for remotes: `feature` from `origin/feature`)
+    pub short_name: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CommitLogEntry {
     pub hash: String,
     pub short_hash: String,

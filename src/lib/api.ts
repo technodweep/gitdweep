@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
+  BranchInfo,
   ChangedFile,
   CommitLogEntry,
   CommitResult,
@@ -103,13 +104,13 @@ export async function getProjectRepoStatuses(
   return invoke("get_project_repo_statuses", { projectId });
 }
 
-export async function listBranches(repoId: string): Promise<string[]> {
+export async function listBranches(repoId: string): Promise<BranchInfo[]> {
   return invoke("list_branches", { repoId });
 }
 
 export async function listProjectBranches(
   projectId: string,
-): Promise<Record<string, string[]>> {
+): Promise<Record<string, BranchInfo[]>> {
   return invoke("list_project_branches", { projectId });
 }
 

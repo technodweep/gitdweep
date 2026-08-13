@@ -157,21 +157,24 @@ pub fn get_project_repo_statuses(
 }
 
 #[tauri::command]
-pub fn list_branches(state: State<'_, AppState>, repo_id: String) -> Result<Vec<String>, String> {
+pub fn list_branches(
+    state: State<'_, AppState>,
+    repo_id: String,
+) -> Result<Vec<BranchInfo>, String> {
     let repo = state.db.get_repo(&repo_id)?;
-    git::list_branches(&repo.path)
+    git::list_all_branches(&repo.path)
 }
 
-/// Prefetch local branches for every repo in a project (one IPC round-trip).
+/// Prefetch local + remote branches for every repo in a project.
 #[tauri::command]
 pub fn list_project_branches(
     state: State<'_, AppState>,
     project_id: String,
-) -> Result<HashMap<String, Vec<String>>, String> {
+) -> Result<HashMap<String, Vec<BranchInfo>>, String> {
     let detail = state.db.get_project(&project_id)?;
     let mut out = HashMap::new();
     for repo in detail.repos {
-        match git::list_branches(&repo.path) {
+        match git::list_all_branches(&repo.path) {
             Ok(branches) => {
                 out.insert(repo.id, branches);
             }

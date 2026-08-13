@@ -11,6 +11,7 @@ import {
   updateEnvironment,
 } from "../lib/api";
 import type {
+  BranchInfo,
   Environment,
   EnvironmentBranch,
   ProjectDetail,
@@ -23,7 +24,9 @@ export function EnvironmentEditor() {
   const [envs, setEnvs] = useState<Environment[]>([]);
   const [activeEnvId, setActiveEnvId] = useState<string | null>(null);
   const [branchMap, setBranchMap] = useState<Record<string, string>>({});
-  const [repoBranches, setRepoBranches] = useState<Record<string, string[]>>({});
+  const [repoBranches, setRepoBranches] = useState<
+    Record<string, BranchInfo[]>
+  >({});
   const [newName, setNewName] = useState("");
   const [toast, setToast] = useState<{ msg: string; error?: boolean } | null>(
     null,
@@ -271,14 +274,29 @@ export function EnvironmentEditor() {
                               }
                             >
                               <option value="">— not set —</option>
-                              {(repoBranches[repo.id] ?? []).map((b) => (
-                                <option key={b} value={b}>
-                                  {b}
-                                </option>
-                              ))}
+                              <optgroup label="Local">
+                                {(repoBranches[repo.id] ?? [])
+                                  .filter((b) => b.kind === "local")
+                                  .map((b) => (
+                                    <option key={b.name} value={b.name}>
+                                      {b.name}
+                                    </option>
+                                  ))}
+                              </optgroup>
+                              <optgroup label="Remote">
+                                {(repoBranches[repo.id] ?? [])
+                                  .filter((b) => b.kind === "remote")
+                                  .map((b) => (
+                                    <option key={b.name} value={b.shortName}>
+                                      {b.name}
+                                    </option>
+                                  ))}
+                              </optgroup>
                               {branchMap[repo.id] &&
-                                !(repoBranches[repo.id] ?? []).includes(
-                                  branchMap[repo.id],
+                                !(repoBranches[repo.id] ?? []).some(
+                                  (b) =>
+                                    b.name === branchMap[repo.id] ||
+                                    b.shortName === branchMap[repo.id],
                                 ) && (
                                   <option value={branchMap[repo.id]}>
                                     {branchMap[repo.id]}

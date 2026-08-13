@@ -656,6 +656,12 @@ a:hover {
   width: min(920px, 100%);
 }
 
+.branch-modal-sections {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+}
+
 .page-header .actions {
   max-width: 100%;
 }
