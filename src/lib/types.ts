@@ -136,8 +136,10 @@ export interface CommitLogEntry {
   subject: string;
   author: string;
   when: string;
+  /** ISO 8601 author date for an exact timestamp tooltip / column */
+  authoredAt?: string;
   /** Parent full hashes; first parent is the primary line */
   parents?: string[];
-  /** Branch / tag labels from git decorations */
+  /** Typed git decorations: head:, branch:, remote:, tag:, or other: */
   refs?: string[];
 }

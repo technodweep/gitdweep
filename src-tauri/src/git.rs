@@ -513,17 +513,19 @@ pub fn commit_all(
 pub fn commit_log(path: &str, limit: usize) -> Result<Vec<crate::models::CommitLogEntry>, String> {
     use crate::models::CommitLogEntry;
     let p = Path::new(path);
-    let n = limit.clamp(1, 300).to_string();
+    let n = limit.clamp(1, 2000).to_string();
     // Include all branches for a SourceTree-like graph; parents for lane layout.
-    // Fields: hash, short, subject, author, relative date, parents, decorations
+    // Full decorations let the UI reliably distinguish local branches, remotes,
+    // tags and HEAD instead of guessing from a shortened ref name.
     let out = run_git(
         p,
         &[
             "log",
             "--all",
             "--topo-order",
+            "--decorate=full",
             &format!("-{n}"),
-            "--format=%H%x1f%h%x1f%s%x1f%an%x1f%cr%x1f%P%x1f%D",
+            "--format=%H%x1f%h%x1f%s%x1f%an%x1f%cr%x1f%P%x1f%D%x1f%aI",
         ],
     )
     .map_err(|e| friendly_git_error(&e))?;
@@ -550,9 +552,21 @@ pub fn commit_log(path: &str, limit: usize) -> Result<Vec<crate::models::CommitL
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty())
             .map(|s| {
-                // Normalize "HEAD -> master" / "origin/main" / "tag: v1"
-                s.replace("HEAD -> ", "HEAD→")
-                    .replace("tag: ", "")
+                if let Some(name) = s.strip_prefix("HEAD -> refs/heads/") {
+                    format!("head:{name}")
+                } else if s == "HEAD" {
+                    "head:detached HEAD".to_string()
+                } else if let Some(name) = s.strip_prefix("refs/heads/") {
+                    format!("branch:{name}")
+                } else if let Some(name) = s.strip_prefix("refs/remotes/") {
+                    format!("remote:{}", name.replace(" -> refs/remotes/", " → "))
+                } else if let Some(name) = s.strip_prefix("tag: refs/tags/") {
+                    format!("tag:{name}")
+                } else if let Some(name) = s.strip_prefix("refs/tags/") {
+                    format!("tag:{name}")
+                } else {
+                    format!("other:{s}")
+                }
             })
             .collect();
         entries.push(CommitLogEntry {
@@ -561,6 +575,7 @@ pub fn commit_log(path: &str, limit: usize) -> Result<Vec<crate::models::CommitL
             subject: parts[2].to_string(),
             author: parts[3].to_string(),
             when: parts[4].to_string(),
+            authored_at: parts.get(7).unwrap_or(&"").to_string(),
             parents,
             refs,
         });

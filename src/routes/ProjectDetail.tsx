@@ -46,6 +46,8 @@ type BatchKind = "pull" | "fetch" | "push";
 type RepoViewMode = "list" | "tabs";
 
 const VIEW_MODE_KEY = "git-workspace.repoViewMode";
+const TAB_HISTORY_LIMIT = 500;
+const FULL_HISTORY_LIMIT = 1000;
 
 export function ProjectDetail() {
   const { projectId = "" } = useParams();
@@ -121,7 +123,7 @@ export function ProjectDetail() {
     setTabDetailError(null);
     try {
       const [commits, files] = await Promise.all([
-        getCommitLog(repoId, 100),
+        getCommitLog(repoId, TAB_HISTORY_LIMIT),
         listChangedFiles(repoId),
       ]);
       setTabCommits(commits);
@@ -573,7 +575,7 @@ export function ProjectDetail() {
     setBranchFromHash("");
     setHistoryLoading(true);
     try {
-      const log = await getCommitLog(repoId, 120);
+      const log = await getCommitLog(repoId, FULL_HISTORY_LIMIT);
       setHistoryEntries(log);
     } catch (e) {
       setToast({ msg: String(e), error: true });
@@ -1236,7 +1238,7 @@ export function ProjectDetail() {
               )}
 
               <div className="repo-tab-columns">
-                <section className="repo-tab-section">
+                <section className="repo-tab-section working-tree-section">
                   <div className="repo-tab-section-head">
                     <h3>Working tree</h3>
                     <span className="muted">
@@ -1303,11 +1305,15 @@ export function ProjectDetail() {
                   )}
                 </section>
 
-                <section className="repo-tab-section">
+                <section className="repo-tab-section commit-history-section">
                   <div className="repo-tab-section-head">
-                    <h3>Commits</h3>
+                    <div>
+                      <h3>Commit history</h3>
+                      <small className="muted">All local and remote branches</small>
+                    </div>
                     <span className="muted">
-                      {tabCommits.length} recent
+                      {tabCommits.length} commit
+                      {tabCommits.length === 1 ? "" : "s"} loaded
                     </span>
                   </div>
                   {tabDetailLoading ? (
@@ -1324,7 +1330,7 @@ export function ProjectDetail() {
                             void openHistory(activeRepo.id, activeRepo.name)
                           }
                         >
-                          Full history…
+                          Open expanded history…
                         </button>
                       </div>
                     </div>
@@ -1568,8 +1574,23 @@ export function ProjectDetail() {
             className="modal modal-wide history-modal"
             onClick={(e) => e.stopPropagation()}
           >
-            <h2>History — {historyName}</h2>
-            <div className="card" style={{ marginBottom: "0.75rem" }}>
+            <div className="history-modal-heading">
+              <div>
+                <h2>History — {historyName}</h2>
+                <p className="muted">
+                  {historyEntries.length} commit
+                  {historyEntries.length === 1 ? "" : "s"} loaded · all branches
+                </p>
+              </div>
+              <button
+                className="btn"
+                disabled={historyBusy}
+                onClick={() => setHistoryRepoId(null)}
+              >
+                Close
+              </button>
+            </div>
+            <div className="card history-branch-controls">
               <label>
                 New branch name (for “Branch here”)
                 <input
@@ -1609,15 +1630,6 @@ export function ProjectDetail() {
                 />
               </div>
             )}
-            <div className="actions" style={{ justifyContent: "flex-end" }}>
-              <button
-                className="btn"
-                disabled={historyBusy}
-                onClick={() => setHistoryRepoId(null)}
-              >
-                Close
-              </button>
-            </div>
           </div>
         </div>
       )}

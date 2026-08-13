@@ -1,11 +1,13 @@
-import { useMemo, type ReactNode } from "react";
+import { useMemo, type CSSProperties, type ReactNode } from "react";
 import type { CommitLogEntry } from "../lib/types";
+import { Icon } from "./Icon";
 
-const LANE_W = 16;
-const ROW_H = 44;
-const PAD_X = 10;
-const PAD_Y = 14;
-const DOT_R = 4.5;
+const LANE_W = 19;
+const ROW_H = 58;
+const PAD_X = 12;
+const PAD_Y = ROW_H / 2;
+const DOT_R = 5;
+const MAX_GRAPH_W = 180;
 
 const COLORS = [
   "#5b8def",
@@ -125,13 +127,10 @@ function layoutGraph(commits: CommitLogEntry[]): {
   return { nodes, edges, maxCol };
 }
 
-function edgePath(
-  e: GraphEdge,
-  _maxCol: number,
-): string {
-  const x1 = PAD_X + e.x1 * LANE_W + LANE_W / 2;
+function edgePath(e: GraphEdge, laneWidth: number): string {
+  const x1 = PAD_X + e.x1 * laneWidth + laneWidth / 2;
   const y1 = PAD_Y + e.y1 * ROW_H;
-  const x2 = PAD_X + e.x2 * LANE_W + LANE_W / 2;
+  const x2 = PAD_X + e.x2 * laneWidth + laneWidth / 2;
   const y2 = PAD_Y + e.y2 * ROW_H;
 
   if (e.x1 === e.x2) {
@@ -142,6 +141,93 @@ function edgePath(
   // Smooth fork / merge curve (SourceTree-ish)
   const midY = (y1 + y2) / 2;
   return `M ${x1} ${y1} C ${x1} ${midY}, ${x2} ${midY}, ${x2} ${y2}`;
+}
+
+type RefKind = "head" | "local" | "remote" | "tag" | "other";
+
+interface ParsedRef {
+  kind: RefKind;
+  label: string;
+}
+
+const COMMIT_DATE_FORMAT = new Intl.DateTimeFormat(undefined, {
+  year: "numeric",
+  month: "short",
+  day: "2-digit",
+  hour: "2-digit",
+  minute: "2-digit",
+});
+
+function parseRef(raw: string): ParsedRef {
+  const typed = raw.match(/^(head|branch|remote|tag|other):(.*)$/);
+  if (typed) {
+    return {
+      kind: typed[1] === "branch" ? "local" : (typed[1] as RefKind),
+      label: typed[2].trim(),
+    };
+  }
+
+  // Backwards compatibility for logs returned by an older running backend.
+  if (raw.startsWith("HEAD→")) {
+    return { kind: "head", label: raw.slice(5).trim() };
+  }
+  if (raw.startsWith("tag: ")) {
+    return { kind: "tag", label: raw.slice(5).trim() };
+  }
+  if (/^(origin|upstream)\//.test(raw)) {
+    return { kind: "remote", label: raw };
+  }
+  return { kind: "local", label: raw };
+}
+
+function refKindLabel(kind: RefKind): string {
+  if (kind === "local") return "LOCAL";
+  if (kind === "remote") return "REMOTE";
+  if (kind === "tag") return "TAG";
+  if (kind === "head") return "HEAD";
+  return "REF";
+}
+
+function refTitle(ref: ParsedRef): string {
+  const kind =
+    ref.kind === "head"
+      ? "Checked out branch"
+      : ref.kind === "local"
+        ? "Local branch"
+        : ref.kind === "remote"
+          ? "Remote branch"
+          : ref.kind === "tag"
+            ? "Tag"
+            : "Git ref";
+  return `${kind}: ${ref.label}`;
+}
+
+function formatCommitDate(value?: string): string {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return COMMIT_DATE_FORMAT.format(date);
+}
+
+function CommitRefBadge({ raw, color }: { raw: string; color: string }) {
+  const ref = parseRef(raw);
+  return (
+    <span
+      className={`commit-ref-badge ref-${ref.kind}`}
+      style={{ "--ref-color": color } as CSSProperties}
+      title={refTitle(ref)}
+    >
+      {ref.kind === "local" || ref.kind === "head" ? (
+        <Icon name="branch" size={12} className="commit-ref-icon" />
+      ) : (
+        <span className="commit-ref-symbol" aria-hidden>
+          {ref.kind === "tag" ? "◆" : ref.kind === "remote" ? "⇄" : "•"}
+        </span>
+      )}
+      <span className="commit-ref-kind">{refKindLabel(ref.kind)}</span>
+      <span className="commit-ref-name">{ref.label}</span>
+    </span>
+  );
 }
 
 export function CommitGraph({
@@ -160,9 +246,20 @@ export function CommitGraph({
     () => layoutGraph(commits),
     [commits],
   );
+  const nodeByHash = useMemo(
+    () => new Map(nodes.map((node) => [node.hash, node])),
+    [nodes],
+  );
 
-  const graphW = Math.max(PAD_X * 2 + maxCol * LANE_W, 48);
+  const naturalGraphW = Math.max(PAD_X * 2 + maxCol * LANE_W, 62);
+  const graphW = Math.min(naturalGraphW, MAX_GRAPH_W);
+  const laneWidth = Math.min(
+    LANE_W,
+    (graphW - PAD_X * 2) / Math.max(maxCol, 1),
+  );
+  const nodeRadius = Math.min(DOT_R, Math.max(1.75, laneWidth * 0.32));
   const graphH = PAD_Y * 2 + Math.max(commits.length - 1, 0) * ROW_H;
+  const contentMinWidth = actions ? 650 : 510;
 
   if (commits.length === 0) {
     return <p className="muted">No commits</p>;
@@ -172,28 +269,42 @@ export function CommitGraph({
     <div className="commit-graph">
       <div className="commit-graph-scroll">
         <div
+          className={`commit-graph-header${actions ? " has-actions" : ""}`}
+          style={{ minWidth: graphW + contentMinWidth }}
+        >
+          <span style={{ width: graphW }}>Graph</span>
+          <span>Description</span>
+          <span>Author</span>
+          <span>Date</span>
+          <span>Commit</span>
+          {actions ? <span>Actions</span> : null}
+        </div>
+        <div
           className="commit-graph-inner"
-          style={{ minHeight: graphH + ROW_H }}
+          style={{
+            minHeight: graphH,
+            minWidth: graphW + contentMinWidth,
+          }}
         >
           <svg
             className="commit-graph-svg"
             width={graphW}
-            height={graphH + ROW_H / 2}
+            height={graphH}
             aria-hidden
           >
             {edges.map((e, i) => (
               <path
                 key={i}
-                d={edgePath(e, maxCol)}
+                d={edgePath(e, laneWidth)}
                 fill="none"
                 stroke={COLORS[e.color % COLORS.length]}
-                strokeWidth={2}
+                strokeWidth={Math.min(2.25, Math.max(1.2, laneWidth * 0.18))}
                 strokeLinecap="round"
                 opacity={0.85}
               />
             ))}
             {nodes.map((n) => {
-              const cx = PAD_X + n.col * LANE_W + LANE_W / 2;
+              const cx = PAD_X + n.col * laneWidth + laneWidth / 2;
               const cy = PAD_Y + n.row * ROW_H;
               const selected = selectedHash === n.hash;
               return (
@@ -201,7 +312,7 @@ export function CommitGraph({
                   key={n.hash}
                   cx={cx}
                   cy={cy}
-                  r={selected ? DOT_R + 1.5 : DOT_R}
+                  r={selected ? nodeRadius + 1.5 : nodeRadius}
                   fill={COLORS[n.color % COLORS.length]}
                   stroke={selected ? "#fff" : "rgba(0,0,0,0.35)"}
                   strokeWidth={selected ? 2 : 1}
@@ -213,32 +324,77 @@ export function CommitGraph({
           <div className="commit-graph-rows">
             {commits.map((c) => {
               const selected = selectedHash === c.hash;
+              const node = nodeByHash.get(c.hash);
+              const laneColor = COLORS[(node?.color ?? 0) % COLORS.length];
+              const refs = c.refs ?? [];
+              const exactDate = formatCommitDate(c.authoredAt);
               return (
                 <div
                   key={c.hash}
-                  className={`commit-graph-row${selected ? " selected" : ""}`}
+                  className={`commit-graph-row${selected ? " selected" : ""}${
+                    onSelect ? " selectable" : ""
+                  }`}
                   style={{ height: ROW_H }}
                   onClick={() => onSelect?.(c)}
+                  onKeyDown={(event) => {
+                    if (
+                      onSelect &&
+                      (event.key === "Enter" || event.key === " ")
+                    ) {
+                      event.preventDefault();
+                      onSelect(c);
+                    }
+                  }}
+                  role={onSelect ? "button" : undefined}
+                  tabIndex={onSelect ? 0 : undefined}
                 >
                   <div
                     className="commit-graph-spacer"
                     style={{ width: graphW }}
                   />
-                  <div className="commit-graph-body">
-                    <div className="commit-graph-subject-line">
-                      <span className="mono history-hash" title={c.hash}>
-                        {c.shortHash}
+                  <div
+                    className={`commit-graph-body${actions ? " has-actions" : ""}`}
+                  >
+                    <div className="commit-graph-description">
+                      {refs.length > 0 ? (
+                        <div className="commit-graph-refs">
+                          {refs.slice(0, 6).map((ref) => (
+                            <CommitRefBadge
+                              key={ref}
+                              raw={ref}
+                              color={laneColor}
+                            />
+                          ))}
+                          {refs.length > 6 ? (
+                            <span
+                              className="commit-ref-more"
+                              title={refs
+                                .slice(6)
+                                .map((ref) => parseRef(ref).label)
+                                .join(", ")}
+                            >
+                              +{refs.length - 6}
+                            </span>
+                          ) : null}
+                        </div>
+                      ) : null}
+                      <span className="commit-graph-subject" title={c.subject}>
+                        {c.subject}
                       </span>
-                      <span className="commit-graph-subject">{c.subject}</span>
-                      {(c.refs ?? []).slice(0, 4).map((r) => (
-                        <span key={r} className="commit-ref-badge" title={r}>
-                          {r.length > 28 ? `${r.slice(0, 26)}…` : r}
-                        </span>
-                      ))}
                     </div>
-                    <div className="muted commit-graph-meta">
-                      {c.author} · {c.when}
+                    <div className="commit-graph-author" title={c.author}>
+                      {c.author}
                     </div>
+                    <div
+                      className="commit-graph-date"
+                      title={exactDate ? `${exactDate} · ${c.when}` : c.when}
+                    >
+                      <span>{exactDate || c.when}</span>
+                      {exactDate ? <small>{c.when}</small> : null}
+                    </div>
+                    <span className="mono history-hash" title={c.hash}>
+                      {c.shortHash}
+                    </span>
                     {actions ? (
                       <div
                         className="commit-graph-actions"

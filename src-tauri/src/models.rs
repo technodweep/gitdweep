@@ -208,10 +208,12 @@ pub struct CommitLogEntry {
     pub subject: String,
     pub author: String,
     pub when: String,
+    /// Exact ISO 8601 author timestamp.
+    pub authored_at: String,
     /// Parent commit hashes (full), first parent is primary line
     #[serde(default)]
     pub parents: Vec<String>,
-    /// Branch/tag decorations e.g. HEAD -> master, origin/main
+    /// Typed decorations: head:, branch:, remote:, tag:, or other:.
     #[serde(default)]
     pub refs: Vec<String>,
 }
