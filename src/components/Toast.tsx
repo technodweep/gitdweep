@@ -1,3 +1,5 @@
+import { Icon } from "./Icon";
+
 export function Toast({
   message,
   error,
@@ -10,10 +12,13 @@ export function Toast({
   if (!message) return null;
   return (
     <div className={`toast${error ? " error" : ""}`} role="status">
-      <div>{message}</div>
-      <div className="actions" style={{ marginTop: "0.5rem" }}>
-        <button className="btn btn-ghost" onClick={onClose}>
-          Dismiss
+      <span className="toast-icon">
+        <Icon name={error ? "x" : "check"} size={16} />
+      </span>
+      <div className="toast-message">{message}</div>
+      <div className="toast-actions">
+        <button className="icon-btn" onClick={onClose} aria-label="Dismiss">
+          <Icon name="x" size={16} />
         </button>
       </div>
     </div>

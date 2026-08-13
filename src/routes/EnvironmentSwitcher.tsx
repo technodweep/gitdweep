@@ -19,6 +19,7 @@ import type {
   SwitchResult,
 } from "../lib/types";
 import { Toast } from "../components/Toast";
+import { Icon } from "../components/Icon";
 
 function previewBadgeClass(action: string): string {
   switch (action) {
@@ -189,6 +190,7 @@ export function EnvironmentSwitcher() {
     <>
       <div className="page-header">
         <div>
+          <div className="eyebrow">Environment workflow</div>
           <h1>Switch environment</h1>
           <p>
             Dry-run preview updates as you change options. Then run the real
@@ -204,6 +206,7 @@ export function EnvironmentSwitcher() {
             onClick={() => void onSwitch()}
             disabled={running || !envId || enabledRepos.length === 0}
           >
+            {!running && <Icon name="switch" size={16} />}
             {running ? "Switching…" : "Switch all to environment"}
           </button>
         </div>

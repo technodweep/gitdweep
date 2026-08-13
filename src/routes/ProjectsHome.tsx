@@ -9,6 +9,7 @@ import {
 } from "../lib/api";
 import type { ProjectSummary, ScannedRepo } from "../lib/types";
 import { Toast } from "../components/Toast";
+import { Icon } from "../components/Icon";
 
 export function ProjectsHome() {
   const navigate = useNavigate();
@@ -57,55 +58,92 @@ export function ProjectsHome() {
     <>
       <div className="page-header">
         <div>
-          <h1>Projects</h1>
-          <p>Multi-repo workspaces with environment branch presets.</p>
+          <div className="eyebrow">Workspace overview</div>
+          <h1>Your projects</h1>
+          <p>Keep related repositories and branch environments together.</p>
         </div>
         <div className="actions">
           <button className="btn btn-primary" onClick={() => setShowCreate(true)}>
+            <Icon name="plus" size={16} />
             Add project
           </button>
         </div>
       </div>
 
       {loading ? (
-        <div className="empty">Loading…</div>
+        <div className="project-grid" aria-label="Loading projects">
+          {[0, 1, 2].map((item) => (
+            <div className="card project-card project-card-skeleton" key={item}>
+              <div className="skeleton skeleton-icon" />
+              <div className="skeleton-lines">
+                <div className="skeleton skeleton-title" />
+                <div className="skeleton skeleton-copy" />
+              </div>
+            </div>
+          ))}
+        </div>
       ) : projects.length === 0 ? (
-        <div className="card empty">
-          <p>No projects yet.</p>
+        <div className="card empty empty-state">
+          <span className="empty-state-icon">
+            <Icon name="folder" size={30} />
+          </span>
+          <h2>Bring your repositories together</h2>
+          <p>
+            Create a project, scan a folder, and manage every repository from
+            one clean workspace.
+          </p>
           <button className="btn btn-primary" onClick={() => setShowCreate(true)}>
+            <Icon name="plus" size={16} />
             Create your first project
           </button>
         </div>
       ) : (
-        <div className="card-list">
+        <div className="project-grid">
           {projects.map((p) => (
-            <div
+            <article
               key={p.id}
               className="card project-card"
               onClick={() => navigate(`/projects/${p.id}`)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  navigate(`/projects/${p.id}`);
+                }
+              }}
+              role="button"
+              tabIndex={0}
             >
-              <div>
-                <strong>{p.name}</strong>
-                <div className="muted mono">{p.rootPath ?? "No root path"}</div>
-                <div className="muted" style={{ marginTop: "0.25rem" }}>
+              <div className="project-card-top">
+                <span className="project-icon">
+                  <Icon name="folder" size={21} />
+                </span>
+                <span className="repo-count">
                   {p.repoCount} repo{p.repoCount === 1 ? "" : "s"}
+                </span>
+              </div>
+              <div className="project-card-copy">
+                <h2>{p.name}</h2>
+                <div className="muted mono project-path" title={p.rootPath ?? undefined}>
+                  {p.rootPath ?? "No root folder configured"}
                 </div>
               </div>
-              <div className="actions" onClick={(e) => e.stopPropagation()}>
+              <div className="project-card-footer" onClick={(e) => e.stopPropagation()}>
                 <button
-                  className="btn"
+                  className="project-open"
                   onClick={() => navigate(`/projects/${p.id}`)}
                 >
-                  Open
+                  Open workspace <Icon name="arrow-right" size={16} />
                 </button>
                 <button
-                  className="btn btn-danger"
+                  className="icon-btn danger"
                   onClick={() => void onDelete(p.id, p.name)}
+                  aria-label={`Delete ${p.name}`}
+                  title={`Delete ${p.name}`}
                 >
-                  Delete
+                  <Icon name="trash" size={16} />
                 </button>
               </div>
-            </div>
+            </article>
           ))}
         </div>
       )}
@@ -210,10 +248,19 @@ function CreateProjectModal({
   return (
     <div className="modal-backdrop" onClick={onClose}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
-        <h2>Add project</h2>
+        <div className="modal-header">
+          <span className="modal-icon"><Icon name="spark" size={20} /></span>
+          <div>
+            <h2>Add a project</h2>
+            <p>Choose a root folder and we’ll find its Git repositories.</p>
+          </div>
+          <button className="icon-btn" onClick={onClose} aria-label="Close">
+            <Icon name="x" size={17} />
+          </button>
+        </div>
         <div className="form-grid">
           <label>
-            Name
+            <span className="field-label">Project name</span>
             <input
               type="text"
               value={name}
@@ -222,11 +269,14 @@ function CreateProjectModal({
             />
           </label>
           <div>
+            <div className="field-label">Repositories</div>
             <div className="actions">
               <button className="btn" onClick={() => void chooseRoot()} disabled={busy}>
+                <Icon name="folder" size={16} />
                 {rootPath ? "Change root & rescan" : "Pick root folder & scan"}
               </button>
               <button className="btn" onClick={() => void addManualRepo()} disabled={busy}>
+                <Icon name="plus" size={16} />
                 Add repo manually
               </button>
             </div>
@@ -263,6 +313,7 @@ function CreateProjectModal({
               Cancel
             </button>
             <button className="btn btn-primary" onClick={() => void submit()} disabled={busy}>
+              {!busy && <Icon name="plus" size={16} />}
               {busy ? "Working…" : "Create project"}
             </button>
           </div>

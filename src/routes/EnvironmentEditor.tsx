@@ -17,6 +17,7 @@ import type {
   ProjectDetail,
 } from "../lib/types";
 import { Toast } from "../components/Toast";
+import { Icon } from "../components/Icon";
 
 export function EnvironmentEditor() {
   const { projectId = "" } = useParams();
@@ -153,6 +154,7 @@ export function EnvironmentEditor() {
     <>
       <div className="page-header">
         <div>
+          <div className="eyebrow">Branch presets</div>
           <h1>Environments</h1>
           <p>
             Define per-repo default branches for {detail?.project.name ?? "…"}
@@ -170,6 +172,7 @@ export function EnvironmentEditor() {
             style={{ minWidth: 200 }}
           />
           <button className="btn btn-primary" onClick={() => void onCreate()}>
+            <Icon name="plus" size={16} />
             Create
           </button>
         </div>

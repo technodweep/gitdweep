@@ -127,7 +127,7 @@ function layoutGraph(commits: CommitLogEntry[]): {
 
 function edgePath(
   e: GraphEdge,
-  maxCol: number,
+  _maxCol: number,
 ): string {
   const x1 = PAD_X + e.x1 * LANE_W + LANE_W / 2;
   const y1 = PAD_Y + e.y1 * ROW_H;
@@ -167,12 +167,6 @@ export function CommitGraph({
   if (commits.length === 0) {
     return <p className="muted">No commits</p>;
   }
-
-  const nodeMap = useMemo(() => {
-    const m = new Map<string, GraphNode>();
-    for (const n of nodes) m.set(n.hash, n);
-    return m;
-  }, [nodes]);
 
   return (
     <div className="commit-graph">
@@ -218,7 +212,6 @@ export function CommitGraph({
 
           <div className="commit-graph-rows">
             {commits.map((c) => {
-              const n = nodeMap.get(c.hash);
               const selected = selectedHash === c.hash;
               return (
                 <div

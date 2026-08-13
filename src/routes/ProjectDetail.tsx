@@ -40,6 +40,7 @@ import type {
 import { Toast } from "../components/Toast";
 import { DiffView } from "../components/DiffView";
 import { CommitGraph } from "../components/CommitGraph";
+import { Icon } from "../components/Icon";
 
 type BatchKind = "pull" | "fetch" | "push";
 type RepoViewMode = "list" | "tabs";
@@ -721,6 +722,7 @@ export function ProjectDetail() {
     <>
       <div className="page-header">
         <div>
+          <div className="eyebrow">Project workspace</div>
           <h1>{detail.project.name}</h1>
           <p className="mono">{detail.project.rootPath ?? "No root path"}</p>
         </div>
@@ -745,6 +747,7 @@ export function ProjectDetail() {
             Environments
           </Link>
           <Link className="btn btn-primary" to={`/projects/${projectId}/switch`}>
+            <Icon name="switch" size={16} />
             Switch environment
           </Link>
           <button
@@ -786,6 +789,7 @@ export function ProjectDetail() {
             Rescan
           </button>
           <button className="btn" onClick={() => void onAddRepo()} disabled={busy}>
+            <Icon name="plus" size={16} />
             Add repo
           </button>
           <button className="btn" onClick={() => void refresh()} disabled={busy}>
