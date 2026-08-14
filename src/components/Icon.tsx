@@ -8,6 +8,8 @@ export type IconName =
   | "plus"
   | "repos"
   | "spark"
+  | "sidebar-collapse"
+  | "sidebar-expand"
   | "switch"
   | "trash"
   | "x";
@@ -52,6 +54,18 @@ const paths: Record<IconName, React.ReactNode> = {
     <>
       <path d="m12 3 1.25 3.75L17 8l-3.75 1.25L12 13l-1.25-3.75L7 8l3.75-1.25z" />
       <path d="m18.5 14 .75 2.25L21.5 17l-2.25.75L18.5 20l-.75-2.25L15.5 17l2.25-.75z" />
+    </>
+  ),
+  "sidebar-collapse": (
+    <>
+      <path d="M5 6h14M11 12h8M5 18h14" />
+      <path d="m9 9-3 3 3 3" />
+    </>
+  ),
+  "sidebar-expand": (
+    <>
+      <path d="M5 6h14M5 12h8M5 18h14" />
+      <path d="m11 9 3 3-3 3" />
     </>
   ),
   switch: (

@@ -18,6 +18,7 @@ function NavigationLink({
     <NavLink
       to={to}
       end={end}
+      title={label}
       className={({ isActive }) =>
         isActive ? "nav-link active" : "nav-link"
       }
@@ -32,6 +33,17 @@ function NavigationLink({
 export function Layout() {
   const { projectId } = useParams();
   const [projectName, setProjectName] = useState<string | null>(null);
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(() =>
+    localStorage.getItem("git-workspace.sidebar-collapsed") === "true",
+  );
+
+  const toggleSidebar = () => {
+    setIsSidebarCollapsed((isCollapsed) => {
+      const nextValue = !isCollapsed;
+      localStorage.setItem("git-workspace.sidebar-collapsed", String(nextValue));
+      return nextValue;
+    });
+  };
 
   useEffect(() => {
     if (!projectId) {
@@ -53,16 +65,34 @@ export function Layout() {
   }, [projectId]);
 
   return (
-    <div className="app-shell">
-      <aside className="sidebar">
-        <div className="brand">
-          <span className="brand-mark">
-            <Icon name="branch" size={21} />
-          </span>
-          <span className="brand-copy">
-            <strong>Git Workspace</strong>
-            <small>Developer console</small>
-          </span>
+    <div
+      className={isSidebarCollapsed ? "app-shell sidebar-collapsed" : "app-shell"}
+    >
+      <aside id="app-sidebar" className="sidebar">
+        <div className="sidebar-header">
+          <div className="brand">
+            <span className="brand-mark">
+              <Icon name="branch" size={21} />
+            </span>
+            <span className="brand-copy">
+              <strong>Git Workspace</strong>
+              <small>Developer console</small>
+            </span>
+          </div>
+          <button
+            className="sidebar-toggle"
+            type="button"
+            onClick={toggleSidebar}
+            aria-label={isSidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+            aria-controls="app-sidebar"
+            aria-expanded={!isSidebarCollapsed}
+            title={isSidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+          >
+            <Icon
+              name={isSidebarCollapsed ? "sidebar-expand" : "sidebar-collapse"}
+              size={18}
+            />
+          </button>
         </div>
 
         <nav className="sidebar-nav" aria-label="Main navigation">

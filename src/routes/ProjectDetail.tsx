@@ -16,12 +16,18 @@ import {
   listBranches,
   listChangedFiles,
   listProjectBranches,
+  mergeAbort,
+  mergeBranch,
   openRepoFolder,
   pickFolder,
   pullAll,
   pullRepo,
   pushAll,
   pushRepo,
+  rebaseAbort,
+  rebaseContinue,
+  rebaseOnto,
+  rebaseSkip,
   removeRepo,
   scanRepos,
   setRepoEnabled,
@@ -33,13 +39,16 @@ import type {
   BranchInfo,
   ChangedFile,
   CommitLogEntry,
+  MergeResult,
   ProjectDetail as ProjectDetailType,
   PullResult,
+  RebaseResult,
   RepoStatus,
 } from "../lib/types";
 import { Toast } from "../components/Toast";
 import { DiffView } from "../components/DiffView";
 import { CommitGraph } from "../components/CommitGraph";
+import { ConflictPanel } from "../components/ConflictPanel";
 import { Icon } from "../components/Icon";
 
 type BatchKind = "pull" | "fetch" | "push";
@@ -104,6 +113,24 @@ export function ProjectDetail() {
   const [newBranchName, setNewBranchName] = useState("");
   const [checkoutNew, setCheckoutNew] = useState(true);
   const [branchBusy, setBranchBusy] = useState(false);
+
+  // Merge modal
+  const [mergeRepoId, setMergeRepoId] = useState<string | null>(null);
+  const [mergeRepoName, setMergeRepoName] = useState("");
+  const [mergeBranches, setMergeBranches] = useState<BranchInfo[]>([]);
+  const [mergeSource, setMergeSource] = useState("");
+  const [mergeNoFf, setMergeNoFf] = useState(false);
+  const [mergeSquash, setMergeSquash] = useState(false);
+  const [mergeBusy, setMergeBusy] = useState(false);
+  const [mergeResult, setMergeResult] = useState<MergeResult | null>(null);
+
+  // Rebase modal
+  const [rebaseRepoId, setRebaseRepoId] = useState<string | null>(null);
+  const [rebaseRepoName, setRebaseRepoName] = useState("");
+  const [rebaseBranches, setRebaseBranches] = useState<BranchInfo[]>([]);
+  const [rebaseOntoBranch, setRebaseOntoBranch] = useState("");
+  const [rebaseBusy, setRebaseBusy] = useState(false);
+  const [rebaseResult, setRebaseResult] = useState<RebaseResult | null>(null);
 
   const [toast, setToast] = useState<{ msg: string; error?: boolean } | null>(
     null,
@@ -707,6 +734,208 @@ export function ProjectDetail() {
     }
   }
 
+  async function openMerge(repoId: string, name: string, preselect?: string) {
+    setMergeRepoId(repoId);
+    setMergeRepoName(name);
+    setMergeSource(preselect ?? "");
+    setMergeNoFf(false);
+    setMergeSquash(false);
+    setMergeResult(null);
+    try {
+      const list = await listBranches(repoId);
+      setMergeBranches(list);
+      if (!preselect) {
+        const firstOther = list.find((b) => {
+          const cur = statuses[repoId]?.currentBranch;
+          if (b.kind === "local") return b.name !== cur;
+          return b.shortName !== cur;
+        });
+        if (firstOther) setMergeSource(firstOther.name);
+      }
+    } catch (e) {
+      setToast({ msg: String(e), error: true });
+    }
+  }
+
+  async function onRunMerge() {
+    if (!mergeRepoId || !mergeSource) {
+      setToast({ msg: "Pick a branch to merge in", error: true });
+      return;
+    }
+    const cur = statuses[mergeRepoId]?.currentBranch ?? "current branch";
+    if (
+      !confirm(
+        `Merge “${mergeSource}” into “${cur}”?\n\n` +
+          (mergeSquash
+            ? "Squash merge: changes are staged; you commit yourself.\n"
+            : mergeNoFf
+              ? "No-ff: always create a merge commit.\n"
+              : "Fast-forward when possible.\n") +
+          "Working tree must be clean.",
+      )
+    ) {
+      return;
+    }
+    setMergeBusy(true);
+    setMergeResult(null);
+    try {
+      const result = await mergeBranch(mergeRepoId, mergeSource, {
+        noFf: mergeNoFf && !mergeSquash,
+        squash: mergeSquash,
+      });
+      setMergeResult(result);
+      setToast({
+        msg: result.message,
+        error: !result.success,
+      });
+      await refresh();
+      if (viewMode === "tabs" && activeTabId === mergeRepoId) {
+        void loadTabDetail(mergeRepoId);
+      }
+    } catch (e) {
+      setToast({ msg: String(e), error: true });
+    } finally {
+      setMergeBusy(false);
+    }
+  }
+
+  async function onAbortMerge(repoId: string) {
+    if (!confirm("Abort the in-progress merge? Conflict resolutions will be lost.")) {
+      return;
+    }
+    try {
+      const st = await mergeAbort(repoId);
+      setStatuses((prev) => ({ ...prev, [repoId]: st }));
+      setMergeResult(null);
+      setToast({ msg: "Merge aborted" });
+      await refresh();
+      if (viewMode === "tabs" && activeTabId === repoId) {
+        void loadTabDetail(repoId);
+      }
+    } catch (e) {
+      setToast({ msg: String(e), error: true });
+    }
+  }
+
+  function applyRepoStatus(st: RepoStatus) {
+    setStatuses((prev) => ({ ...prev, [st.repoId]: st }));
+  }
+
+  async function openRebase(repoId: string, name: string, preselect?: string) {
+    setRebaseRepoId(repoId);
+    setRebaseRepoName(name);
+    setRebaseOntoBranch(preselect ?? "");
+    setRebaseResult(null);
+    try {
+      const list = await listBranches(repoId);
+      setRebaseBranches(list);
+      if (!preselect) {
+        const firstOther = list.find((b) => {
+          const cur = statuses[repoId]?.currentBranch;
+          if (b.kind === "local") return b.name !== cur;
+          return b.shortName !== cur;
+        });
+        if (firstOther) setRebaseOntoBranch(firstOther.name);
+      }
+    } catch (e) {
+      setToast({ msg: String(e), error: true });
+    }
+  }
+
+  async function onRunRebase() {
+    if (!rebaseRepoId || !rebaseOntoBranch) {
+      setToast({ msg: "Pick a base branch to rebase onto", error: true });
+      return;
+    }
+    const cur = statuses[rebaseRepoId]?.currentBranch ?? "current branch";
+    if (
+      !confirm(
+        `Rebase “${cur}” onto “${rebaseOntoBranch}”?\n\n` +
+          "This rewrites commits on the current branch. Working tree must be clean.",
+      )
+    ) {
+      return;
+    }
+    setRebaseBusy(true);
+    setRebaseResult(null);
+    try {
+      const result = await rebaseOnto(rebaseRepoId, rebaseOntoBranch);
+      setRebaseResult(result);
+      setToast({ msg: result.message, error: !result.success });
+      await refresh();
+      if (viewMode === "tabs" && activeTabId === rebaseRepoId) {
+        void loadTabDetail(rebaseRepoId);
+      }
+    } catch (e) {
+      setToast({ msg: String(e), error: true });
+    } finally {
+      setRebaseBusy(false);
+    }
+  }
+
+  async function onRebaseContinue(repoId: string) {
+    setRebaseBusy(true);
+    try {
+      const result = await rebaseContinue(repoId);
+      setRebaseResult(result);
+      setToast({ msg: result.message, error: !result.success });
+      await refresh();
+      if (viewMode === "tabs" && activeTabId === repoId) {
+        void loadTabDetail(repoId);
+      }
+    } catch (e) {
+      setToast({ msg: String(e), error: true });
+    } finally {
+      setRebaseBusy(false);
+    }
+  }
+
+  async function onRebaseSkip(repoId: string) {
+    if (
+      !confirm(
+        "Skip this commit during rebase? Its changes will not be applied.",
+      )
+    ) {
+      return;
+    }
+    setRebaseBusy(true);
+    try {
+      const result = await rebaseSkip(repoId);
+      setRebaseResult(result);
+      setToast({ msg: result.message, error: !result.success });
+      await refresh();
+      if (viewMode === "tabs" && activeTabId === repoId) {
+        void loadTabDetail(repoId);
+      }
+    } catch (e) {
+      setToast({ msg: String(e), error: true });
+    } finally {
+      setRebaseBusy(false);
+    }
+  }
+
+  async function onAbortRebase(repoId: string) {
+    if (
+      !confirm(
+        "Abort the in-progress rebase? The branch returns to its pre-rebase state.",
+      )
+    ) {
+      return;
+    }
+    try {
+      const st = await rebaseAbort(repoId);
+      applyRepoStatus(st);
+      setRebaseResult(null);
+      setToast({ msg: "Rebase aborted" });
+      await refresh();
+      if (viewMode === "tabs" && activeTabId === repoId) {
+        void loadTabDetail(repoId);
+      }
+    } catch (e) {
+      setToast({ msg: String(e), error: true });
+    }
+  }
+
   if (loading && !detail) {
     return <div className="empty">Loading…</div>;
   }
@@ -861,6 +1090,12 @@ export function ProjectDetail() {
                   <div className="repo-card-identity">
                     <div className="repo-card-title-row">
                       <h3 className="repo-card-name">{repo.name}</h3>
+                      {st?.isMerging ? (
+                        <span className="badge warn">merging</span>
+                      ) : null}
+                      {st?.isRebasing ? (
+                        <span className="badge warn">rebasing</span>
+                      ) : null}
                       {st?.error ? (
                         <span className="badge err">{st.error}</span>
                       ) : st?.isDirty ? (
@@ -885,6 +1120,21 @@ export function ProjectDetail() {
                         </span>
                       ) : null}
                     </div>
+                    {st?.isMerging && (st.conflictFiles?.length ?? 0) > 0 ? (
+                      <div className="merge-banner">
+                        Conflicts in {st.conflictFiles!.length} file(s). Open
+                        Merge to resolve file-by-file, or abort.
+                      </div>
+                    ) : null}
+                    {st?.isRebasing ? (
+                      <div className="merge-banner">
+                        Rebase in progress
+                        {(st.conflictFiles?.length ?? 0) > 0
+                          ? ` · ${st.conflictFiles!.length} conflict(s)`
+                          : ""}
+                        . Open Rebase to continue, skip, or abort.
+                      </div>
+                    ) : null}
                     <div className="muted mono repo-card-path" title={repo.path}>
                       {repo.path}
                     </div>
@@ -988,8 +1238,42 @@ export function ProjectDetail() {
                     >
                       Stage
                     </button>
+                    <button
+                      className="btn btn-sm"
+                      disabled={busy || !!st?.isDetached}
+                      title="Merge another branch into current"
+                      onClick={() => void openMerge(repo.id, repo.name)}
+                    >
+                      Merge
+                    </button>
+                    <button
+                      className="btn btn-sm"
+                      disabled={busy || !!st?.isDetached}
+                      title="Rebase current branch onto another"
+                      onClick={() => void openRebase(repo.id, repo.name)}
+                    >
+                      Rebase
+                    </button>
                   </div>
                   <div className="repo-actions-secondary">
+                    {st?.isMerging ? (
+                      <button
+                        className="btn btn-sm btn-danger"
+                        disabled={busy}
+                        onClick={() => void onAbortMerge(repo.id)}
+                      >
+                        Abort merge
+                      </button>
+                    ) : null}
+                    {st?.isRebasing ? (
+                      <button
+                        className="btn btn-sm btn-danger"
+                        disabled={busy}
+                        onClick={() => void onAbortRebase(repo.id)}
+                      >
+                        Abort rebase
+                      </button>
+                    ) : null}
                     <button
                       className="btn btn-sm btn-ghost"
                       disabled={busy}
@@ -1072,6 +1356,12 @@ export function ProjectDetail() {
                       />
                       <span className="muted">Enabled for batch</span>
                     </label>
+                    {activeSt?.isMerging ? (
+                      <span className="badge warn">merging</span>
+                    ) : null}
+                    {activeSt?.isRebasing ? (
+                      <span className="badge warn">rebasing</span>
+                    ) : null}
                     {activeSt?.error ? (
                       <span className="badge err">{activeSt.error}</span>
                     ) : activeSt?.isDirty ? (
@@ -1196,6 +1486,42 @@ export function ProjectDetail() {
                   >
                     Stage
                   </button>
+                  <button
+                    className="btn btn-sm"
+                    disabled={busy || !!activeSt?.isDetached}
+                    onClick={() =>
+                      void openMerge(activeRepo.id, activeRepo.name)
+                    }
+                  >
+                    Merge
+                  </button>
+                  <button
+                    className="btn btn-sm"
+                    disabled={busy || !!activeSt?.isDetached}
+                    onClick={() =>
+                      void openRebase(activeRepo.id, activeRepo.name)
+                    }
+                  >
+                    Rebase
+                  </button>
+                  {activeSt?.isMerging ? (
+                    <button
+                      className="btn btn-sm btn-danger"
+                      disabled={busy}
+                      onClick={() => void onAbortMerge(activeRepo.id)}
+                    >
+                      Abort merge
+                    </button>
+                  ) : null}
+                  {activeSt?.isRebasing ? (
+                    <button
+                      className="btn btn-sm btn-danger"
+                      disabled={busy}
+                      onClick={() => void onAbortRebase(activeRepo.id)}
+                    >
+                      Abort rebase
+                    </button>
+                  ) : null}
                   <button
                     className="btn btn-sm btn-ghost"
                     disabled={busy}
@@ -1634,6 +1960,488 @@ export function ProjectDetail() {
         </div>
       )}
 
+      {/* Merge modal */}
+      {mergeRepoId && (
+        <div className="modal-backdrop" onClick={() => setMergeRepoId(null)}>
+          <div
+            className="modal modal-wide"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2>Merge — {mergeRepoName}</h2>
+            <p className="muted" style={{ marginTop: 0 }}>
+              Merge another branch into{" "}
+              <strong className="mono">
+                {statuses[mergeRepoId]?.currentBranch ?? "current branch"}
+              </strong>
+              . Working tree must be clean.
+            </p>
+
+            {statuses[mergeRepoId]?.isMerging ? (
+              <div className="merge-panel conflict">
+                <strong>Merge in progress</strong>
+                <p className="muted" style={{ marginBottom: 0 }}>
+                  {(statuses[mergeRepoId]?.conflictFiles?.length ?? 0) > 0
+                    ? "Resolve each file below (Ours / Theirs / Mark resolved), then commit."
+                    : "All conflicts resolved. Commit to finish, or abort."}
+                </p>
+                {(statuses[mergeRepoId]?.conflictFiles?.length ?? 0) > 0 ? (
+                  <ConflictPanel
+                    repoId={mergeRepoId}
+                    files={statuses[mergeRepoId]!.conflictFiles ?? []}
+                    mode="merge"
+                    busy={mergeBusy}
+                    onStatus={(st) => {
+                      applyRepoStatus(st);
+                      setMergeResult((prev) =>
+                        prev
+                          ? {
+                              ...prev,
+                              conflictFiles: st.conflictFiles ?? [],
+                              message:
+                                (st.conflictFiles?.length ?? 0) === 0
+                                  ? "Conflicts resolved — commit to finish the merge."
+                                  : prev.message,
+                            }
+                          : prev,
+                      );
+                    }}
+                    onToast={(msg, error) => setToast({ msg, error })}
+                  />
+                ) : null}
+                <div className="actions" style={{ marginTop: "0.75rem" }}>
+                  <button
+                    className="btn btn-primary"
+                    disabled={mergeBusy}
+                    onClick={() => {
+                      void openCommit(mergeRepoId, mergeRepoName);
+                    }}
+                  >
+                    Open stage / commit
+                  </button>
+                  <button
+                    className="btn btn-danger"
+                    disabled={mergeBusy}
+                    onClick={() => void onAbortMerge(mergeRepoId)}
+                  >
+                    Abort merge
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="form-grid">
+                <label>
+                  Branch to merge in
+                  <select
+                    value={mergeSource}
+                    onChange={(e) => setMergeSource(e.target.value)}
+                    disabled={mergeBusy}
+                  >
+                    <option value="">— select branch —</option>
+                    <optgroup label="Local">
+                      {mergeBranches
+                        .filter(
+                          (b) =>
+                            b.kind === "local" &&
+                            b.name !==
+                              statuses[mergeRepoId]?.currentBranch,
+                        )
+                        .map((b) => (
+                          <option key={b.name} value={b.name}>
+                            {b.name}
+                          </option>
+                        ))}
+                    </optgroup>
+                    <optgroup label="Remote">
+                      {mergeBranches
+                        .filter((b) => b.kind === "remote")
+                        .map((b) => (
+                          <option key={b.name} value={b.name}>
+                            {b.name}
+                          </option>
+                        ))}
+                    </optgroup>
+                  </select>
+                </label>
+
+                <label className="option-check">
+                  <input
+                    type="checkbox"
+                    checked={mergeNoFf}
+                    disabled={mergeBusy || mergeSquash}
+                    onChange={(e) => setMergeNoFf(e.target.checked)}
+                  />
+                  <span>
+                    Create merge commit (no fast-forward)
+                    <span className="muted"> — git merge --no-ff</span>
+                  </span>
+                </label>
+                <label className="option-check">
+                  <input
+                    type="checkbox"
+                    checked={mergeSquash}
+                    disabled={mergeBusy}
+                    onChange={(e) => {
+                      setMergeSquash(e.target.checked);
+                      if (e.target.checked) setMergeNoFf(false);
+                    }}
+                  />
+                  <span>
+                    Squash into one commit (stage only)
+                    <span className="muted">
+                      {" "}
+                      — you write the commit message after
+                    </span>
+                  </span>
+                </label>
+
+                {mergeResult && (
+                  <div
+                    className={`merge-panel${
+                      mergeResult.status === "conflict"
+                        ? " conflict"
+                        : mergeResult.success
+                          ? " ok"
+                          : ""
+                    }`}
+                  >
+                    <span
+                      className={`badge ${
+                        mergeResult.success ? "ok" : "err"
+                      }`}
+                    >
+                      {mergeResult.status}
+                    </span>
+                    <p style={{ margin: "0.4rem 0 0" }}>{mergeResult.message}</p>
+                    {mergeResult.conflictFiles.length > 0 && (
+                      <ul className="result-list">
+                        {mergeResult.conflictFiles.map((f) => (
+                          <li key={f} className="mono">
+                            {f}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                    {mergeResult.status === "squash_staged" && (
+                      <button
+                        className="btn btn-sm btn-primary"
+                        style={{ marginTop: "0.5rem" }}
+                        onClick={() =>
+                          void openCommit(mergeRepoId, mergeRepoName)
+                        }
+                      >
+                        Commit squash result
+                      </button>
+                    )}
+                    {mergeResult.status === "conflict" && (
+                      <>
+                        {mergeResult.conflictFiles.length > 0 ? (
+                          <ConflictPanel
+                            repoId={mergeRepoId}
+                            files={
+                              statuses[mergeRepoId]?.conflictFiles ??
+                              mergeResult.conflictFiles
+                            }
+                            mode="merge"
+                            busy={mergeBusy}
+                            onStatus={(st) => {
+                              applyRepoStatus(st);
+                              setMergeResult((prev) =>
+                                prev
+                                  ? {
+                                      ...prev,
+                                      conflictFiles: st.conflictFiles ?? [],
+                                      success:
+                                        (st.conflictFiles?.length ?? 0) === 0,
+                                      message:
+                                        (st.conflictFiles?.length ?? 0) === 0
+                                          ? "Conflicts resolved — commit to finish the merge."
+                                          : prev.message,
+                                    }
+                                  : prev,
+                              );
+                            }}
+                            onToast={(msg, error) => setToast({ msg, error })}
+                          />
+                        ) : null}
+                        <div className="actions" style={{ marginTop: "0.5rem" }}>
+                          <button
+                            className="btn btn-sm btn-primary"
+                            onClick={() =>
+                              void openCommit(mergeRepoId, mergeRepoName)
+                            }
+                          >
+                            Open stage / commit
+                          </button>
+                          <button
+                            className="btn btn-sm btn-danger"
+                            onClick={() => void onAbortMerge(mergeRepoId)}
+                          >
+                            Abort merge
+                          </button>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                )}
+
+                <div className="actions" style={{ justifyContent: "flex-end" }}>
+                  <button
+                    className="btn"
+                    disabled={mergeBusy}
+                    onClick={() => setMergeRepoId(null)}
+                  >
+                    Close
+                  </button>
+                  <button
+                    className="btn btn-primary"
+                    disabled={mergeBusy || !mergeSource}
+                    onClick={() => void onRunMerge()}
+                  >
+                    {mergeBusy ? "Merging…" : "Merge into current"}
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Rebase modal */}
+      {rebaseRepoId && (
+        <div className="modal-backdrop" onClick={() => setRebaseRepoId(null)}>
+          <div
+            className="modal modal-wide"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2>Rebase — {rebaseRepoName}</h2>
+            <p className="muted" style={{ marginTop: 0 }}>
+              Replay commits from{" "}
+              <strong className="mono">
+                {statuses[rebaseRepoId]?.currentBranch ?? "current branch"}
+              </strong>{" "}
+              onto another base. Working tree must be clean.
+            </p>
+
+            {statuses[rebaseRepoId]?.isRebasing ? (
+              <div className="merge-panel conflict">
+                <strong>Rebase in progress</strong>
+                <p className="muted" style={{ marginBottom: 0 }}>
+                  {(statuses[rebaseRepoId]?.conflictFiles?.length ?? 0) > 0
+                    ? "Resolve conflicts below, then Continue. Skip drops this commit; Abort undoes the rebase."
+                    : "No remaining conflicts — Continue to finish, Skip, or Abort."}
+                </p>
+                {(statuses[rebaseRepoId]?.conflictFiles?.length ?? 0) > 0 ? (
+                  <ConflictPanel
+                    repoId={rebaseRepoId}
+                    files={statuses[rebaseRepoId]!.conflictFiles ?? []}
+                    mode="rebase"
+                    busy={rebaseBusy}
+                    onStatus={(st) => {
+                      applyRepoStatus(st);
+                      setRebaseResult((prev) =>
+                        prev
+                          ? {
+                              ...prev,
+                              conflictFiles: st.conflictFiles ?? [],
+                              message:
+                                (st.conflictFiles?.length ?? 0) === 0
+                                  ? "Conflicts cleared — press Continue."
+                                  : prev.message,
+                            }
+                          : {
+                              repoId: rebaseRepoId,
+                              success: false,
+                              status: "conflict",
+                              message:
+                                (st.conflictFiles?.length ?? 0) === 0
+                                  ? "Conflicts cleared — press Continue."
+                                  : "Resolve remaining conflicts",
+                              conflictFiles: st.conflictFiles ?? [],
+                            },
+                      );
+                    }}
+                    onToast={(msg, error) => setToast({ msg, error })}
+                  />
+                ) : null}
+                {rebaseResult && (
+                  <p style={{ margin: "0.5rem 0 0" }}>{rebaseResult.message}</p>
+                )}
+                <div className="actions" style={{ marginTop: "0.75rem" }}>
+                  <button
+                    className="btn btn-primary"
+                    disabled={
+                      rebaseBusy ||
+                      (statuses[rebaseRepoId]?.conflictFiles?.length ?? 0) > 0
+                    }
+                    onClick={() => void onRebaseContinue(rebaseRepoId)}
+                  >
+                    {rebaseBusy ? "Working…" : "Continue rebase"}
+                  </button>
+                  <button
+                    className="btn"
+                    disabled={rebaseBusy}
+                    onClick={() => void onRebaseSkip(rebaseRepoId)}
+                  >
+                    Skip commit
+                  </button>
+                  <button
+                    className="btn btn-danger"
+                    disabled={rebaseBusy}
+                    onClick={() => void onAbortRebase(rebaseRepoId)}
+                  >
+                    Abort rebase
+                  </button>
+                  <button
+                    className="btn btn-ghost"
+                    disabled={rebaseBusy}
+                    onClick={() => setRebaseRepoId(null)}
+                  >
+                    Close
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="form-grid">
+                <label>
+                  Rebase onto
+                  <select
+                    value={rebaseOntoBranch}
+                    onChange={(e) => setRebaseOntoBranch(e.target.value)}
+                    disabled={rebaseBusy}
+                  >
+                    <option value="">— select branch —</option>
+                    <optgroup label="Local">
+                      {rebaseBranches
+                        .filter(
+                          (b) =>
+                            b.kind === "local" &&
+                            b.name !==
+                              statuses[rebaseRepoId]?.currentBranch,
+                        )
+                        .map((b) => (
+                          <option key={b.name} value={b.name}>
+                            {b.name}
+                          </option>
+                        ))}
+                    </optgroup>
+                    <optgroup label="Remote">
+                      {rebaseBranches
+                        .filter((b) => b.kind === "remote")
+                        .map((b) => (
+                          <option key={b.name} value={b.name}>
+                            {b.name}
+                          </option>
+                        ))}
+                    </optgroup>
+                  </select>
+                </label>
+
+                {rebaseResult && (
+                  <div
+                    className={`merge-panel${
+                      rebaseResult.status === "conflict"
+                        ? " conflict"
+                        : rebaseResult.success
+                          ? " ok"
+                          : ""
+                    }`}
+                  >
+                    <span
+                      className={`badge ${
+                        rebaseResult.success ? "ok" : "err"
+                      }`}
+                    >
+                      {rebaseResult.status}
+                    </span>
+                    <p style={{ margin: "0.4rem 0 0" }}>{rebaseResult.message}</p>
+                    {rebaseResult.status === "conflict" && (
+                      <>
+                        {(
+                          statuses[rebaseRepoId]?.conflictFiles ??
+                          rebaseResult.conflictFiles
+                        ).length > 0 ? (
+                          <ConflictPanel
+                            repoId={rebaseRepoId}
+                            files={
+                              statuses[rebaseRepoId]?.conflictFiles ??
+                              rebaseResult.conflictFiles
+                            }
+                            mode="rebase"
+                            busy={rebaseBusy}
+                            onStatus={(st) => {
+                              applyRepoStatus(st);
+                              setRebaseResult((prev) =>
+                                prev
+                                  ? {
+                                      ...prev,
+                                      conflictFiles: st.conflictFiles ?? [],
+                                      message:
+                                        (st.conflictFiles?.length ?? 0) === 0
+                                          ? "Conflicts cleared — press Continue."
+                                          : prev.message,
+                                    }
+                                  : prev,
+                              );
+                            }}
+                            onToast={(msg, error) => setToast({ msg, error })}
+                          />
+                        ) : null}
+                        <div className="actions" style={{ marginTop: "0.5rem" }}>
+                          <button
+                            className="btn btn-sm btn-primary"
+                            disabled={
+                              rebaseBusy ||
+                              (
+                                statuses[rebaseRepoId]?.conflictFiles ??
+                                rebaseResult.conflictFiles
+                              ).length > 0
+                            }
+                            onClick={() => void onRebaseContinue(rebaseRepoId)}
+                          >
+                            Continue
+                          </button>
+                          <button
+                            className="btn btn-sm"
+                            disabled={rebaseBusy}
+                            onClick={() => void onRebaseSkip(rebaseRepoId)}
+                          >
+                            Skip
+                          </button>
+                          <button
+                            className="btn btn-sm btn-danger"
+                            disabled={rebaseBusy}
+                            onClick={() => void onAbortRebase(rebaseRepoId)}
+                          >
+                            Abort
+                          </button>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                )}
+
+                <div className="actions" style={{ justifyContent: "flex-end" }}>
+                  <button
+                    className="btn"
+                    disabled={rebaseBusy}
+                    onClick={() => setRebaseRepoId(null)}
+                  >
+                    Close
+                  </button>
+                  <button
+                    className="btn btn-primary"
+                    disabled={rebaseBusy || !rebaseOntoBranch}
+                    onClick={() => void onRunRebase()}
+                  >
+                    {rebaseBusy ? "Rebasing…" : "Start rebase"}
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Branches modal */}
       {branchRepoId && (
         <div className="modal-backdrop" onClick={() => setBranchRepoId(null)}>
@@ -1719,6 +2527,36 @@ export function ProjectDetail() {
                                       Checkout
                                     </button>
                                     <button
+                                      className="btn btn-sm"
+                                      disabled={branchBusy}
+                                      title="Merge this branch into current"
+                                      onClick={() => {
+                                        void openMerge(
+                                          branchRepoId,
+                                          branchRepoName,
+                                          b.name,
+                                        );
+                                        setBranchRepoId(null);
+                                      }}
+                                    >
+                                      Merge into current
+                                    </button>
+                                    <button
+                                      className="btn btn-sm"
+                                      disabled={branchBusy}
+                                      title="Rebase current branch onto this"
+                                      onClick={() => {
+                                        void openRebase(
+                                          branchRepoId,
+                                          branchRepoName,
+                                          b.name,
+                                        );
+                                        setBranchRepoId(null);
+                                      }}
+                                    >
+                                      Rebase onto this
+                                    </button>
+                                    <button
                                       className="btn btn-sm btn-danger"
                                       disabled={branchBusy}
                                       onClick={() =>
@@ -1769,17 +2607,48 @@ export function ProjectDetail() {
                               </span>
                               <div className="row-actions">
                                 {!current && (
-                                  <button
-                                    className="btn btn-sm"
-                                    disabled={branchBusy}
-                                    title={`Checkout ${b.shortName} tracking ${b.name}`}
-                                    onClick={() => {
-                                      void onCheckout(branchRepoId, b.name);
-                                      setBranchRepoId(null);
-                                    }}
-                                  >
-                                    Checkout
-                                  </button>
+                                  <>
+                                    <button
+                                      className="btn btn-sm"
+                                      disabled={branchBusy}
+                                      title={`Checkout ${b.shortName} tracking ${b.name}`}
+                                      onClick={() => {
+                                        void onCheckout(branchRepoId, b.name);
+                                        setBranchRepoId(null);
+                                      }}
+                                    >
+                                      Checkout
+                                    </button>
+                                    <button
+                                      className="btn btn-sm"
+                                      disabled={branchBusy}
+                                      onClick={() => {
+                                        void openMerge(
+                                          branchRepoId,
+                                          branchRepoName,
+                                          b.name,
+                                        );
+                                        setBranchRepoId(null);
+                                      }}
+                                    >
+                                      Merge into current
+                                    </button>
+                                    <button
+                                      className="btn btn-sm"
+                                      disabled={branchBusy}
+                                      title="Rebase current branch onto this"
+                                      onClick={() => {
+                                        void openRebase(
+                                          branchRepoId,
+                                          branchRepoName,
+                                          b.name,
+                                        );
+                                        setBranchRepoId(null);
+                                      }}
+                                    >
+                                      Rebase onto this
+                                    </button>
+                                  </>
                                 )}
                               </div>
                             </div>

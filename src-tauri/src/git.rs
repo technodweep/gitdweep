@@ -77,6 +77,9 @@ pub fn repo_status(repo_id: &str, path: &str) -> RepoStatus {
             behind: None,
             last_commit: None,
             last_commit_at: None,
+            is_merging: false,
+            is_rebasing: false,
+            conflict_files: Vec::new(),
             error: Some("Path does not exist".into()),
         };
     }
@@ -98,6 +101,15 @@ pub fn repo_status(repo_id: &str, path: &str) -> RepoStatus {
             Ok(s) => !s.is_empty(),
             Err(_) => false,
         }
+    };
+
+    let is_merging = run_git(p, &["rev-parse", "-q", "--verify", "MERGE_HEAD"]).is_ok();
+    let is_rebasing = is_rebase_in_progress(p);
+
+    let conflict_files = if is_merging || is_rebasing {
+        conflicted_paths(p)
+    } else {
+        Vec::new()
     };
 
     let (ahead, behind) = if branch_err.is_none() && !is_detached {
@@ -125,8 +137,64 @@ pub fn repo_status(repo_id: &str, path: &str) -> RepoStatus {
         behind,
         last_commit,
         last_commit_at,
+        is_merging,
+        is_rebasing,
+        conflict_files,
         error: branch_err,
     }
+}
+
+fn is_rebase_in_progress(repo: &Path) -> bool {
+    // Prefer git-path so worktrees and linked checkouts resolve correctly
+    for name in ["rebase-merge", "rebase-apply"] {
+        if let Ok(p) = run_git(repo, &["rev-parse", "--git-path", name]) {
+            let raw = Path::new(p.trim());
+            let full = if raw.is_absolute() {
+                raw.to_path_buf()
+            } else {
+                repo.join(raw)
+            };
+            if full.exists() {
+                return true;
+            }
+        }
+    }
+    let git_dir = repo.join(".git");
+    git_dir.join("rebase-merge").exists()
+        || git_dir.join("rebase-apply").exists()
+        || repo.join("rebase-merge").exists()
+        || repo.join("rebase-apply").exists()
+}
+
+fn conflicted_paths(repo: &Path) -> Vec<String> {
+    // Unmerged paths: status codes start with U or have UU/AA/DD etc.
+    let porcelain =
+        run_git(repo, &["-c", "color.status=false", "status", "--porcelain=v1"])
+            .unwrap_or_default();
+    let mut out = Vec::new();
+    for line in porcelain.lines() {
+        let bytes = line.as_bytes();
+        if bytes.len() < 4 {
+            continue;
+        }
+        let x = bytes[0] as char;
+        let y = bytes[1] as char;
+        let unmerged = matches!(
+            (x, y),
+            ('U', _) | (_, 'U') | ('A', 'A') | ('D', 'D')
+        );
+        if !unmerged {
+            continue;
+        }
+        let path_start = if bytes[2] == b' ' { 3 } else { 2 };
+        if path_start < line.len() {
+            let path = line[path_start..].trim().trim_matches('"').to_string();
+            if !path.is_empty() {
+                out.push(path);
+            }
+        }
+    }
+    out
 }
 
 fn ahead_behind(repo: &Path) -> (Option<i64>, Option<i64>) {
@@ -624,6 +692,395 @@ pub fn create_branch(path: &str, name: &str, checkout: bool) -> Result<String, S
         run_git(p, &["branch", name])?;
         Ok(format!("Created branch {name}"))
     }
+}
+
+/// Merge `source` into the current branch.
+/// Returns Ok with status text, or a structured conflict message via Err with prefix CONFLICT:
+pub fn merge_branch(
+    path: &str,
+    source: &str,
+    no_ff: bool,
+    squash: bool,
+) -> Result<crate::models::MergeResult, String> {
+    use crate::models::MergeResult;
+    let p = Path::new(path);
+    let source = source.trim();
+    if source.is_empty() {
+        return Err("Source branch is required".into());
+    }
+
+    // Resolve remote-looking names
+    let source_ref = if run_git(
+        p,
+        &["show-ref", "--verify", &format!("refs/heads/{source}")],
+    )
+    .is_ok()
+    {
+        source.to_string()
+    } else if run_git(
+        p,
+        &["show-ref", "--verify", &format!("refs/remotes/{source}")],
+    )
+    .is_ok()
+    {
+        source.to_string()
+    } else if run_git(
+        p,
+        &[
+            "show-ref",
+            "--verify",
+            &format!("refs/remotes/origin/{source}"),
+        ],
+    )
+    .is_ok()
+    {
+        format!("origin/{source}")
+    } else {
+        return Err(format!("Branch not found: {source}"));
+    };
+
+    if run_git(p, &["rev-parse", "-q", "--verify", "MERGE_HEAD"]).is_ok() {
+        let conflicts = conflicted_paths(p);
+        return Ok(MergeResult {
+            repo_id: String::new(),
+            success: false,
+            status: "conflict".into(),
+            message: "A merge is already in progress. Resolve conflicts or abort first."
+                .into(),
+            conflict_files: conflicts,
+        });
+    }
+
+    if is_dirty(path)? {
+        return Err(
+            "Working tree has uncommitted changes. Commit, stash, or discard them before merging."
+                .into(),
+        );
+    }
+
+    if let Ok(Some(cur)) = current_branch(path) {
+        // Compare tips
+        let cur_tip = run_git(p, &["rev-parse", &cur]).unwrap_or_default();
+        let src_tip = run_git(p, &["rev-parse", &source_ref]).unwrap_or_default();
+        if !cur_tip.is_empty() && cur_tip == src_tip {
+            return Ok(MergeResult {
+                repo_id: String::new(),
+                success: true,
+                status: "already_up_to_date".into(),
+                message: format!("Already up to date with {source_ref}"),
+                conflict_files: Vec::new(),
+            });
+        }
+    }
+
+    let mut args = vec!["merge".to_string()];
+    if squash {
+        args.push("--squash".into());
+    } else if no_ff {
+        args.push("--no-ff".into());
+    }
+    args.push("--no-edit".into());
+    args.push(source_ref.clone());
+    let args_ref: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+
+    match run_git_with_stderr(p, &args_ref) {
+        Ok(msg) => {
+            let lower = msg.to_lowercase();
+            let status = if lower.contains("already up to date") {
+                "already_up_to_date"
+            } else if squash {
+                "squash_staged"
+            } else {
+                "ok"
+            };
+            Ok(MergeResult {
+                repo_id: String::new(),
+                success: true,
+                status: status.into(),
+                message: if msg.trim().is_empty() {
+                    format!("Merged {source_ref} successfully")
+                } else {
+                    truncate_msg(&msg, 400)
+                },
+                conflict_files: Vec::new(),
+            })
+        }
+        Err(e) => {
+            let conflicts = conflicted_paths(p);
+            let merging = run_git(p, &["rev-parse", "-q", "--verify", "MERGE_HEAD"]).is_ok();
+            if merging || !conflicts.is_empty() {
+                Ok(MergeResult {
+                    repo_id: String::new(),
+                    success: false,
+                    status: "conflict".into(),
+                    message: format!(
+                        "Merge conflicts in {} file(s). Fix them, then commit — or abort the merge.",
+                        conflicts.len()
+                    ),
+                    conflict_files: conflicts,
+                })
+            } else {
+                Err(truncate_msg(&e, 500))
+            }
+        }
+    }
+}
+
+pub fn merge_abort(path: &str) -> Result<String, String> {
+    let p = Path::new(path);
+    if run_git(p, &["rev-parse", "-q", "--verify", "MERGE_HEAD"]).is_err() {
+        return Err("No merge in progress".into());
+    }
+    run_git_with_stderr(p, &["merge", "--abort"])
+}
+
+/// Rebase current branch onto `onto`.
+pub fn rebase_onto(path: &str, onto: &str) -> Result<crate::models::RebaseResult, String> {
+    use crate::models::RebaseResult;
+    let p = Path::new(path);
+    let onto = onto.trim();
+    if onto.is_empty() {
+        return Err("Base branch is required".into());
+    }
+
+    let onto_ref = if run_git(p, &["show-ref", "--verify", &format!("refs/heads/{onto}")]).is_ok()
+    {
+        onto.to_string()
+    } else if run_git(p, &["show-ref", "--verify", &format!("refs/remotes/{onto}")]).is_ok() {
+        onto.to_string()
+    } else if run_git(
+        p,
+        &[
+            "show-ref",
+            "--verify",
+            &format!("refs/remotes/origin/{onto}"),
+        ],
+    )
+    .is_ok()
+    {
+        format!("origin/{onto}")
+    } else {
+        return Err(format!("Branch not found: {onto}"));
+    };
+
+    if is_rebase_in_progress(p) {
+        let conflicts = conflicted_paths(p);
+        return Ok(RebaseResult {
+            repo_id: String::new(),
+            success: false,
+            status: "conflict".into(),
+            message: "A rebase is already in progress. Continue, skip, or abort."
+                .into(),
+            conflict_files: conflicts,
+        });
+    }
+    if run_git(p, &["rev-parse", "-q", "--verify", "MERGE_HEAD"]).is_ok() {
+        return Err("A merge is in progress. Finish or abort it before rebasing.".into());
+    }
+    if is_dirty(path)? {
+        return Err(
+            "Working tree has uncommitted changes. Commit, stash, or discard before rebasing."
+                .into(),
+        );
+    }
+
+    match run_git_with_stderr(p, &["rebase", &onto_ref]) {
+        Ok(msg) => {
+            let lower = msg.to_lowercase();
+            let status = if lower.contains("up to date") || lower.contains("is up to date") {
+                "already_up_to_date"
+            } else {
+                "ok"
+            };
+            Ok(RebaseResult {
+                repo_id: String::new(),
+                success: true,
+                status: status.into(),
+                message: if msg.trim().is_empty() {
+                    format!("Rebased onto {onto_ref}")
+                } else {
+                    truncate_msg(&msg, 400)
+                },
+                conflict_files: Vec::new(),
+            })
+        }
+        Err(e) => {
+            let conflicts = conflicted_paths(p);
+            if is_rebase_in_progress(p) || !conflicts.is_empty() {
+                Ok(RebaseResult {
+                    repo_id: String::new(),
+                    success: false,
+                    status: "conflict".into(),
+                    message: format!(
+                        "Rebase paused with {} conflict(s). Resolve files, then Continue — or Abort.",
+                        conflicts.len()
+                    ),
+                    conflict_files: conflicts,
+                })
+            } else {
+                Err(truncate_msg(&e, 500))
+            }
+        }
+    }
+}
+
+pub fn rebase_continue(path: &str) -> Result<crate::models::RebaseResult, String> {
+    use crate::models::RebaseResult;
+    let p = Path::new(path);
+    if !is_rebase_in_progress(p) {
+        return Err("No rebase in progress".into());
+    }
+    // Ensure no unmerged paths remain
+    let conflicts = conflicted_paths(p);
+    if !conflicts.is_empty() {
+        return Ok(RebaseResult {
+            repo_id: String::new(),
+            success: false,
+            status: "conflict".into(),
+            message: format!(
+                "Still {} unresolved conflict(s). Use Ours/Theirs or edit + Mark resolved.",
+                conflicts.len()
+            ),
+            conflict_files: conflicts,
+        });
+    }
+    match run_git_with_stderr(p, &["-c", "core.editor=true", "rebase", "--continue"]) {
+        Ok(msg) => Ok(RebaseResult {
+            repo_id: String::new(),
+            success: true,
+            status: if is_rebase_in_progress(p) {
+                "ok".into()
+            } else {
+                "ok".into()
+            },
+            message: if msg.trim().is_empty() {
+                "Rebase continued".into()
+            } else {
+                truncate_msg(&msg, 400)
+            },
+            conflict_files: conflicted_paths(p),
+        }),
+        Err(e) => {
+            let conflicts = conflicted_paths(p);
+            if is_rebase_in_progress(p) || !conflicts.is_empty() {
+                Ok(RebaseResult {
+                    repo_id: String::new(),
+                    success: false,
+                    status: "conflict".into(),
+                    message: format!(
+                        "Rebase still has conflicts ({}). {}",
+                        conflicts.len(),
+                        truncate_msg(&e, 200)
+                    ),
+                    conflict_files: conflicts,
+                })
+            } else {
+                Err(truncate_msg(&e, 500))
+            }
+        }
+    }
+}
+
+pub fn rebase_abort(path: &str) -> Result<String, String> {
+    let p = Path::new(path);
+    if !is_rebase_in_progress(p) {
+        return Err("No rebase in progress".into());
+    }
+    run_git_with_stderr(p, &["rebase", "--abort"])
+}
+
+pub fn rebase_skip(path: &str) -> Result<crate::models::RebaseResult, String> {
+    use crate::models::RebaseResult;
+    let p = Path::new(path);
+    if !is_rebase_in_progress(p) {
+        return Err("No rebase in progress".into());
+    }
+    match run_git_with_stderr(p, &["rebase", "--skip"]) {
+        Ok(msg) => Ok(RebaseResult {
+            repo_id: String::new(),
+            success: true,
+            status: "ok".into(),
+            message: if msg.trim().is_empty() {
+                "Skipped commit; rebase continued".into()
+            } else {
+                truncate_msg(&msg, 400)
+            },
+            conflict_files: conflicted_paths(p),
+        }),
+        Err(e) => {
+            let conflicts = conflicted_paths(p);
+            Ok(RebaseResult {
+                repo_id: String::new(),
+                success: false,
+                status: if conflicts.is_empty() {
+                    "error".into()
+                } else {
+                    "conflict".into()
+                },
+                message: truncate_msg(&e, 400),
+                conflict_files: conflicts,
+            })
+        }
+    }
+}
+
+/// Resolve one conflicted path: ours | theirs | mark_resolved (git add).
+/// Labels: during merge, ours=current branch, theirs=incoming.
+/// During rebase, git swaps meaning — we still use git's --ours/--theirs.
+pub fn resolve_conflict(
+    path: &str,
+    file_path: &str,
+    strategy: &str,
+) -> Result<String, String> {
+    let p = Path::new(path);
+    let file_path = file_path.trim();
+    if file_path.is_empty() {
+        return Err("File path is required".into());
+    }
+    let strategy = strategy.trim().to_lowercase();
+    match strategy.as_str() {
+        "ours" => {
+            run_git(p, &["checkout", "--ours", "--", file_path])?;
+            run_git(p, &["add", "--", file_path])?;
+            Ok(format!("Kept ours for {file_path}"))
+        }
+        "theirs" => {
+            run_git(p, &["checkout", "--theirs", "--", file_path])?;
+            run_git(p, &["add", "--", file_path])?;
+            Ok(format!("Kept theirs for {file_path}"))
+        }
+        "mark_resolved" => {
+            run_git(p, &["add", "--", file_path])?;
+            Ok(format!("Marked resolved: {file_path}"))
+        }
+        _ => Err(format!("Unknown strategy: {strategy}")),
+    }
+}
+
+pub fn read_conflict_file(
+    path: &str,
+    file_path: &str,
+) -> Result<crate::models::ConflictFileView, String> {
+    use crate::models::ConflictFileView;
+    let p = Path::new(path);
+    let file_path = file_path.trim();
+    let full = p.join(file_path);
+    let content = std::fs::read_to_string(&full).map_err(|e| {
+        format!("Could not read {file_path}: {e}")
+    })?;
+    let has_markers = content.contains("<<<<<<<")
+        || content.contains("=======")
+        || content.contains(">>>>>>>");
+    let mut content = content;
+    if content.len() > 120_000 {
+        content.truncate(120_000);
+        content.push_str("\n… (truncated)");
+    }
+    Ok(ConflictFileView {
+        path: file_path.to_string(),
+        content,
+        has_markers,
+    })
 }
 
 /// Delete a local branch (not the current one).

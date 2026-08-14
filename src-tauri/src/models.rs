@@ -87,7 +87,80 @@ pub struct RepoStatus {
     pub last_commit: Option<String>,
     /// Relative time e.g. "2 hours ago"
     pub last_commit_at: Option<String>,
+    /// True when MERGE_HEAD exists (merge in progress)
+    #[serde(default)]
+    pub is_merging: bool,
+    /// True when a rebase is in progress
+    #[serde(default)]
+    pub is_rebasing: bool,
+    /// Paths with unresolved merge/rebase conflicts (UU etc.)
+    #[serde(default)]
+    pub conflict_files: Vec<String>,
     pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MergeRequest {
+    pub repo_id: String,
+    /// Branch or ref to merge into the current branch
+    pub source_branch: String,
+    /// If true, use --no-ff
+    #[serde(default)]
+    pub no_ff: bool,
+    /// If true, use --squash (stages result, does not commit)
+    #[serde(default)]
+    pub squash: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MergeResult {
+    pub repo_id: String,
+    pub success: bool,
+    /// ok | already_up_to_date | conflict | error | squash_staged
+    pub status: String,
+    pub message: String,
+    #[serde(default)]
+    pub conflict_files: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RebaseRequest {
+    pub repo_id: String,
+    /// Branch/ref to rebase onto (e.g. main, origin/main)
+    pub onto_branch: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RebaseResult {
+    pub repo_id: String,
+    pub success: bool,
+    /// ok | already_up_to_date | conflict | error
+    pub status: String,
+    pub message: String,
+    #[serde(default)]
+    pub conflict_files: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResolveConflictRequest {
+    pub repo_id: String,
+    pub path: String,
+    /// ours | theirs | mark_resolved
+    pub strategy: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConflictFileView {
+    pub path: String,
+    /// Raw working-tree content (may include conflict markers)
+    pub content: String,
+    pub has_markers: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -63,8 +63,37 @@ export interface RepoStatus {
   behind: number | null;
   lastCommit: string | null;
   lastCommitAt: string | null;
+  isMerging?: boolean;
+  isRebasing?: boolean;
+  conflictFiles?: string[];
   error: string | null;
 }
+
+export interface MergeResult {
+  repoId: string;
+  success: boolean;
+  /** ok | already_up_to_date | squash_staged | conflict | error */
+  status: string;
+  message: string;
+  conflictFiles: string[];
+}
+
+export interface RebaseResult {
+  repoId: string;
+  success: boolean;
+  /** ok | already_up_to_date | conflict | error */
+  status: string;
+  message: string;
+  conflictFiles: string[];
+}
+
+export interface ConflictFileView {
+  path: string;
+  content: string;
+  hasMarkers: boolean;
+}
+
+export type ConflictStrategy = "ours" | "theirs" | "mark_resolved";
 
 export interface SwitchOptions {
   stashIfDirty: boolean;

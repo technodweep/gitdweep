@@ -7,6 +7,10 @@ import type {
   CreateProjectRequest,
   Environment,
   EnvironmentBranch,
+  ConflictFileView,
+  ConflictStrategy,
+  MergeResult,
+  RebaseResult,
   ProjectDetail,
   ProjectSummary,
   PullResult,
@@ -247,6 +251,63 @@ export async function deleteBranch(
   force = false,
 ): Promise<void> {
   return invoke("delete_branch", { repoId, name, force });
+}
+
+export async function mergeBranch(
+  repoId: string,
+  sourceBranch: string,
+  options: { noFf?: boolean; squash?: boolean } = {},
+): Promise<MergeResult> {
+  return invoke("merge_branch", {
+    request: {
+      repoId,
+      sourceBranch,
+      noFf: options.noFf ?? false,
+      squash: options.squash ?? false,
+    },
+  });
+}
+
+export async function mergeAbort(repoId: string): Promise<RepoStatus> {
+  return invoke("merge_abort", { repoId });
+}
+
+export async function rebaseOnto(
+  repoId: string,
+  ontoBranch: string,
+): Promise<RebaseResult> {
+  return invoke("rebase_onto", {
+    request: { repoId, ontoBranch },
+  });
+}
+
+export async function rebaseContinue(repoId: string): Promise<RebaseResult> {
+  return invoke("rebase_continue", { repoId });
+}
+
+export async function rebaseAbort(repoId: string): Promise<RepoStatus> {
+  return invoke("rebase_abort", { repoId });
+}
+
+export async function rebaseSkip(repoId: string): Promise<RebaseResult> {
+  return invoke("rebase_skip", { repoId });
+}
+
+export async function resolveConflict(
+  repoId: string,
+  path: string,
+  strategy: ConflictStrategy,
+): Promise<RepoStatus> {
+  return invoke("resolve_conflict", {
+    request: { repoId, path, strategy },
+  });
+}
+
+export async function readConflictFile(
+  repoId: string,
+  path: string,
+): Promise<ConflictFileView> {
+  return invoke("read_conflict_file", { repoId, path });
 }
 
 export async function checkoutCommit(

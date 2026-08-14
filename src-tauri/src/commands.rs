@@ -738,6 +738,95 @@ pub fn delete_branch(
 }
 
 #[tauri::command]
+pub fn merge_branch(
+    state: State<'_, AppState>,
+    request: MergeRequest,
+) -> Result<MergeResult, String> {
+    let repo = state.db.get_repo(&request.repo_id)?;
+    let mut result = git::merge_branch(
+        &repo.path,
+        &request.source_branch,
+        request.no_ff,
+        request.squash,
+    )?;
+    result.repo_id = repo.id;
+    Ok(result)
+}
+
+#[tauri::command]
+pub fn merge_abort(
+    state: State<'_, AppState>,
+    repo_id: String,
+) -> Result<RepoStatus, String> {
+    let repo = state.db.get_repo(&repo_id)?;
+    git::merge_abort(&repo.path)?;
+    Ok(git::repo_status(&repo.id, &repo.path))
+}
+
+#[tauri::command]
+pub fn rebase_onto(
+    state: State<'_, AppState>,
+    request: RebaseRequest,
+) -> Result<RebaseResult, String> {
+    let repo = state.db.get_repo(&request.repo_id)?;
+    let mut result = git::rebase_onto(&repo.path, &request.onto_branch)?;
+    result.repo_id = repo.id;
+    Ok(result)
+}
+
+#[tauri::command]
+pub fn rebase_continue(
+    state: State<'_, AppState>,
+    repo_id: String,
+) -> Result<RebaseResult, String> {
+    let repo = state.db.get_repo(&repo_id)?;
+    let mut result = git::rebase_continue(&repo.path)?;
+    result.repo_id = repo.id;
+    Ok(result)
+}
+
+#[tauri::command]
+pub fn rebase_abort(
+    state: State<'_, AppState>,
+    repo_id: String,
+) -> Result<RepoStatus, String> {
+    let repo = state.db.get_repo(&repo_id)?;
+    git::rebase_abort(&repo.path)?;
+    Ok(git::repo_status(&repo.id, &repo.path))
+}
+
+#[tauri::command]
+pub fn rebase_skip(
+    state: State<'_, AppState>,
+    repo_id: String,
+) -> Result<RebaseResult, String> {
+    let repo = state.db.get_repo(&repo_id)?;
+    let mut result = git::rebase_skip(&repo.path)?;
+    result.repo_id = repo.id;
+    Ok(result)
+}
+
+#[tauri::command]
+pub fn resolve_conflict(
+    state: State<'_, AppState>,
+    request: ResolveConflictRequest,
+) -> Result<RepoStatus, String> {
+    let repo = state.db.get_repo(&request.repo_id)?;
+    git::resolve_conflict(&repo.path, &request.path, &request.strategy)?;
+    Ok(git::repo_status(&repo.id, &repo.path))
+}
+
+#[tauri::command]
+pub fn read_conflict_file(
+    state: State<'_, AppState>,
+    repo_id: String,
+    path: String,
+) -> Result<ConflictFileView, String> {
+    let repo = state.db.get_repo(&repo_id)?;
+    git::read_conflict_file(&repo.path, &path)
+}
+
+#[tauri::command]
 pub fn checkout_commit(
     state: State<'_, AppState>,
     repo_id: String,
