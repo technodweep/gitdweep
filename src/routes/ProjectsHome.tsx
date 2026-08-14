@@ -10,15 +10,66 @@ import {
 import type { ProjectSummary, ScannedRepo } from "../lib/types";
 import { Toast } from "../components/Toast";
 import { Icon } from "../components/Icon";
+import {
+  copyToClipboard,
+  useContextMenu,
+  type ContextMenuItem,
+} from "../components/ContextMenu";
 
 export function ProjectsHome() {
   const navigate = useNavigate();
+  const { open: openCtx, menuNode: ctxMenu } = useContextMenu();
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [showCreate, setShowCreate] = useState(false);
   const [toast, setToast] = useState<{ msg: string; error?: boolean } | null>(
     null,
   );
+
+  function projectMenuItems(p: ProjectSummary): ContextMenuItem[] {
+    const items: ContextMenuItem[] = [
+      { type: "label", id: "lbl", label: p.name },
+      {
+        id: "open",
+        label: "Open workspace",
+        onSelect: () => navigate(`/projects/${p.id}`),
+      },
+      {
+        id: "copy-name",
+        label: "Copy name",
+        onSelect: () => {
+          void copyToClipboard(p.name).then((ok) =>
+            setToast({
+              msg: ok ? "Copied name" : "Could not copy",
+              error: !ok,
+            }),
+          );
+        },
+      },
+    ];
+    if (p.rootPath) {
+      items.push({
+        id: "copy-path",
+        label: "Copy root path",
+        onSelect: () => {
+          void copyToClipboard(p.rootPath!).then((ok) =>
+            setToast({
+              msg: ok ? "Copied path" : "Could not copy",
+              error: !ok,
+            }),
+          );
+        },
+      });
+    }
+    items.push({ type: "separator", id: "s1" });
+    items.push({
+      id: "delete",
+      label: "Delete project…",
+      danger: true,
+      onSelect: () => void onDelete(p.id, p.name),
+    });
+    return items;
+  }
 
   async function refresh() {
     setLoading(true);
@@ -56,6 +107,7 @@ export function ProjectsHome() {
 
   return (
     <>
+      {ctxMenu}
       <div className="page-header">
         <div>
           <div className="eyebrow">Workspace overview</div>
@@ -104,6 +156,7 @@ export function ProjectsHome() {
               key={p.id}
               className="card project-card"
               onClick={() => navigate(`/projects/${p.id}`)}
+              onContextMenu={(e) => openCtx(e, projectMenuItems(p))}
               onKeyDown={(event) => {
                 if (event.key === "Enter" || event.key === " ") {
                   event.preventDefault();

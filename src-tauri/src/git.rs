@@ -221,18 +221,75 @@ pub fn list_branches(path: &str) -> Result<Vec<String>, String> {
         .collect())
 }
 
+/// Parse `%(upstream:track,nobracket)` values like `ahead 1, behind 2`, `behind 3`, `gone`.
+fn parse_upstream_track(track: &str) -> (Option<i64>, Option<i64>, bool) {
+    let track = track.trim();
+    if track.is_empty() {
+        return (Some(0), Some(0), false);
+    }
+    if track.eq_ignore_ascii_case("gone") {
+        return (None, None, true);
+    }
+    let mut ahead = 0i64;
+    let mut behind = 0i64;
+    for part in track.split(',') {
+        let p = part.trim();
+        if let Some(rest) = p.strip_prefix("ahead ") {
+            ahead = rest.trim().parse().unwrap_or(0);
+        } else if let Some(rest) = p.strip_prefix("behind ") {
+            behind = rest.trim().parse().unwrap_or(0);
+        }
+    }
+    (Some(ahead), Some(behind), false)
+}
+
 /// Local + remote-tracking branches for UI (dropdowns, branch manager).
+/// Local branches include upstream + ahead/behind so the UI can show pulls on other branches.
 pub fn list_all_branches(path: &str) -> Result<Vec<crate::models::BranchInfo>, String> {
     use crate::models::BranchInfo;
     let p = Path::new(path);
     let mut out = Vec::new();
 
-    let local = run_git(p, &["branch", "--format=%(refname:short)"])?;
-    for name in local.lines().map(|l| l.trim()).filter(|l| !l.is_empty()) {
+    // name\0upstream\0track\0HEAD-marker (*)
+    let local = run_git(
+        p,
+        &[
+            "for-each-ref",
+            "--format=%(refname:short)%00%(upstream:short)%00%(upstream:track,nobracket)%00%(HEAD)",
+            "refs/heads/",
+        ],
+    )?;
+    for line in local.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let parts: Vec<&str> = line.split('\0').collect();
+        let name = parts.first().copied().unwrap_or("").trim();
+        if name.is_empty() {
+            continue;
+        }
+        let upstream_raw = parts.get(1).copied().unwrap_or("").trim();
+        let track = parts.get(2).copied().unwrap_or("").trim();
+        let head_mark = parts.get(3).copied().unwrap_or("").trim();
+        let is_current = head_mark == "*";
+
+        let (upstream, ahead, behind, upstream_gone) = if upstream_raw.is_empty() {
+            (None, None, None, false)
+        } else {
+            let (a, b, gone) = parse_upstream_track(track);
+            (Some(upstream_raw.to_string()), a, b, gone)
+        };
+
         out.push(BranchInfo {
             name: name.to_string(),
             kind: "local".into(),
             short_name: name.to_string(),
+            upstream,
+            ahead,
+            behind,
+            is_current,
+            upstream_gone,
         });
     }
 
@@ -246,18 +303,23 @@ pub fn list_all_branches(path: &str) -> Result<Vec<crate::models::BranchInfo>, S
             .split_once('/')
             .map(|(_, rest)| rest.to_string())
             .unwrap_or_else(|| name.to_string());
-        // Skip remotes that already have an identically named local branch
-        // still show them so user can re-checkout / see upstream
         out.push(BranchInfo {
             name: name.to_string(),
             kind: "remote".into(),
             short_name,
+            upstream: None,
+            ahead: None,
+            behind: None,
+            is_current: false,
+            upstream_gone: false,
         });
     }
 
     out.sort_by(|a, b| {
-        a.kind
-            .cmp(&b.kind) // local before remote if we sort local < remote... "local" < "remote" ✓
+        // Current local first, then other locals, then remotes; name within group
+        b.is_current
+            .cmp(&a.is_current)
+            .then_with(|| a.kind.cmp(&b.kind))
             .then_with(|| a.name.cmp(&b.name))
     });
     Ok(out)

@@ -271,6 +271,21 @@ pub struct BranchInfo {
     pub kind: String,
     /// Local name without remote prefix (for remotes: `feature` from `origin/feature`)
     pub short_name: String,
+    /// Configured upstream ref (e.g. origin/main). Local branches only.
+    #[serde(default)]
+    pub upstream: Option<String>,
+    /// Commits ahead of upstream (None if no upstream / not computed)
+    #[serde(default)]
+    pub ahead: Option<i64>,
+    /// Commits behind upstream — pulls available when > 0
+    #[serde(default)]
+    pub behind: Option<i64>,
+    /// True when this is the currently checked-out branch
+    #[serde(default)]
+    pub is_current: bool,
+    /// Upstream is configured but remote ref is gone
+    #[serde(default)]
+    pub upstream_gone: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

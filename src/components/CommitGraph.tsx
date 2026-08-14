@@ -1,4 +1,9 @@
-import { useMemo, type CSSProperties, type ReactNode } from "react";
+import {
+  useMemo,
+  type CSSProperties,
+  type MouseEvent as ReactMouseEvent,
+  type ReactNode,
+} from "react";
 import type { CommitLogEntry } from "../lib/types";
 import { Icon } from "./Icon";
 
@@ -235,12 +240,14 @@ export function CommitGraph({
   onSelect,
   selectedHash,
   actions,
+  onContextMenu,
 }: {
   commits: CommitLogEntry[];
   onSelect?: (c: CommitLogEntry) => void;
   selectedHash?: string | null;
   /** Optional per-row action buttons (history modal) */
   actions?: (c: CommitLogEntry) => ReactNode;
+  onContextMenu?: (e: ReactMouseEvent, c: CommitLogEntry) => void;
 }) {
   const { nodes, edges, maxCol } = useMemo(
     () => layoutGraph(commits),
@@ -332,10 +339,11 @@ export function CommitGraph({
                 <div
                   key={c.hash}
                   className={`commit-graph-row${selected ? " selected" : ""}${
-                    onSelect ? " selectable" : ""
+                    onSelect || onContextMenu ? " selectable" : ""
                   }`}
                   style={{ height: ROW_H }}
                   onClick={() => onSelect?.(c)}
+                  onContextMenu={(e) => onContextMenu?.(e, c)}
                   onKeyDown={(event) => {
                     if (
                       onSelect &&

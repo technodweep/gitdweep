@@ -157,6 +157,16 @@ export interface BranchInfo {
   kind: string;
   /** Local name without remote prefix */
   shortName: string;
+  /** Configured upstream (e.g. origin/main). Local only. */
+  upstream?: string | null;
+  /** Commits ahead of upstream */
+  ahead?: number | null;
+  /** Commits behind upstream — pulls available when > 0 */
+  behind?: number | null;
+  /** Currently checked-out branch */
+  isCurrent?: boolean;
+  /** Upstream configured but remote ref gone */
+  upstreamGone?: boolean;
 }
 
 export interface CommitLogEntry {

@@ -1,0 +1,110 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 1100" role="img" aria-labelledby="title desc">
+  <title id="title">GitDweep Technodweep logo</title>
+  <desc id="desc">A cable and globe symbol above the GitDweep wordmark, a flowing island motif, and the Technodweep tagline.</desc>
+
+  <defs>
+    <radialGradient id="backgroundGradient" cx="50%" cy="42%" r="78%">
+      <stop offset="0" stop-color="#17191f"/>
+      <stop offset="1" stop-color="#0d0f14"/>
+    </radialGradient>
+
+    <linearGradient id="wordGradient" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#245185"/>
+      <stop offset="0.48" stop-color="#287785"/>
+      <stop offset="1" stop-color="#2d917f"/>
+    </linearGradient>
+
+    <linearGradient id="waveGradient" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#24548d"/>
+      <stop offset="0.38" stop-color="#287a91"/>
+      <stop offset="1" stop-color="#4aa28d"/>
+    </linearGradient>
+
+    <linearGradient id="sandGradient" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#efcf9e"/>
+      <stop offset="0.55" stop-color="#dcb988"/>
+      <stop offset="1" stop-color="#f0d2a4"/>
+    </linearGradient>
+
+    <linearGradient id="whiteGradient" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#ececef"/>
+    </linearGradient>
+
+    <clipPath id="globeClip">
+      <circle cx="630" cy="260" r="133"/>
+    </clipPath>
+  </defs>
+
+  <!-- Remove this rectangle for a transparent-background version. -->
+  <rect id="background" width="1200" height="1100" fill="url(#backgroundGradient)"/>
+
+  <!-- Cable and globe mark -->
+  <g id="symbol">
+    <path d="M388 95h21c47 0 85 38 85 85v111c0 70 36 122 93 139"
+          fill="none" stroke="url(#whiteGradient)" stroke-width="23" stroke-linecap="round"/>
+    <circle cx="376" cy="95" r="27" fill="url(#whiteGradient)"/>
+    <circle cx="586" cy="432" r="25" fill="url(#whiteGradient)"/>
+
+    <g id="globe">
+      <g clip-path="url(#globeClip)">
+        <path d="M497 205c12-11 28-17 44-12 20 6 29 22 48 25 16 2 26 3 27 13 1 11-14 13-25 17-10 4-2 16-10 21-8 6-27-2-28 11-1 10 13 16 20 25 10 11-4 17-7 24-5 12 17 16 15 28-2 11-18 3-20 14-2 14 23 30 14 39-17-4-36-13-46-25-13-16-13-38-25-39-14-1-16 29-29 28-13-2-25-25-29-39-6-21-12-50-5-72 3-9 7-17 13-23z"
+              fill="#8da884"/>
+        <path d="M708 149c31 24 51 62 54 104-17-2-36-4-43-14-7-10-2-26-10-36-8-10-25-18-24-31 0-10 10-16 23-23z"
+              fill="#ed8145"/>
+        <path d="M761 276c-4 60-48 109-104 116 12-15 25-26 31-43 6-17 4-37 17-48 14-12 35-16 56-25z"
+              fill="#8c78aa"/>
+      </g>
+
+      <circle cx="630" cy="260" r="133" fill="none" stroke="#f5f5f4" stroke-width="5"/>
+      <path d="M630 127c-33 20-55 70-55 133s22 113 55 133M630 127c33 20 55 70 55 133s-22 113-55 133"
+            fill="none" stroke="#f5f5f4" stroke-width="4" stroke-linecap="round"/>
+      <path d="M516 189c31 19 69 28 114 28s83-9 114-28M501 260h258M516 331c31-19 69-28 114-28s83 9 114 28M630 127v266"
+            fill="none" stroke="#f5f5f4" stroke-width="4" stroke-linecap="round"/>
+    </g>
+  </g>
+
+  <!-- Wordmark -->
+  <g id="wordmark">
+    <rect x="305" y="469" width="35" height="35" rx="1" fill="#856ba5" transform="rotate(45 322.5 486.5)"/>
+    <text x="116" y="650" fill="url(#whiteGradient)"
+          font-family="Noto Sans Devanagari, Nirmala UI, Mangal, sans-serif"
+          font-size="205" font-weight="500" letter-spacing="-12">गिट</text>
+    <text x="424" y="650" fill="url(#wordGradient)"
+          font-family="Noto Sans, Montserrat, Arial, sans-serif"
+          font-size="185" font-weight="300" letter-spacing="-11">dweep</text>
+    <path d="M521 505H1048" fill="none" stroke="#285782" stroke-width="6" stroke-linecap="round"/>
+  </g>
+
+  <!-- Flowing island -->
+  <g id="flow">
+    <path d="M278 728c80-66 150-24 227 23 64 39 125 58 197 28 65-28 122-96 223-50-75-20-126 57-203 82-88 30-163-2-225-43-77-51-132-72-219-40z"
+          fill="url(#waveGradient)"/>
+    <path d="M304 735c55-25 103-10 151 21 35 22 62 46 99 67-55-14-90-36-131-59-48-27-77-33-119-29z"
+          fill="#2b639e"/>
+    <path d="M535 759c42-28 86-28 131 0-42 24-88 24-131 0z" fill="url(#sandGradient)"/>
+    <path d="M599 753c-1-16-3-30-10-42 14 4 23 13 24 27 7-10 16-16 28-17-4 15-14 25-29 31z"
+          fill="#4b8c66"/>
+  </g>
+
+  <!-- Supporting name and tagline -->
+  <g id="supporting-copy" fill="#f4f4f4" font-family="Noto Sans, Montserrat, Arial, sans-serif">
+    <path d="M115 881H240" stroke="#8469a5" stroke-width="3" stroke-linecap="round"/>
+    <circle cx="115" cy="881" r="10" fill="#8469a5"/>
+    <circle cx="240" cy="881" r="7" fill="#8469a5"/>
+    <path d="M960 881h125" stroke="#74a679" stroke-width="3" stroke-linecap="round"/>
+    <circle cx="960" cy="881" r="7" fill="#74a679"/>
+    <circle cx="1085" cy="881" r="10" fill="#74a679"/>
+
+    <text x="600" y="899" text-anchor="middle" font-size="52" font-weight="300" letter-spacing="18">technodweep</text>
+
+    <text x="600" y="980" text-anchor="middle" font-size="25" font-weight="400" letter-spacing="9">
+      <tspan>CODE</tspan>
+      <tspan fill="#ed8145" font-size="35" letter-spacing="5">•</tspan>
+      <tspan>COLLABORATE</tspan>
+      <tspan fill="#2d897e" font-size="35" letter-spacing="5">•</tspan>
+      <tspan>FLOW</tspan>
+    </text>
+  </g>
+</svg>

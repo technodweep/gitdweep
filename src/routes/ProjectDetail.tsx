@@ -43,23 +43,37 @@ import type {
   ProjectDetail as ProjectDetailType,
   PullResult,
   RebaseResult,
+  Repo,
   RepoStatus,
 } from "../lib/types";
 import { Toast } from "../components/Toast";
 import { DiffView } from "../components/DiffView";
 import { CommitGraph } from "../components/CommitGraph";
 import { ConflictPanel } from "../components/ConflictPanel";
+import { RepoInspector } from "../components/RepoInspector";
+import {
+  copyToClipboard,
+  useContextMenu,
+  type ContextMenuItem,
+} from "../components/ContextMenu";
 import { Icon } from "../components/Icon";
 
 type BatchKind = "pull" | "fetch" | "push";
 type RepoViewMode = "list" | "tabs";
 
 const VIEW_MODE_KEY = "git-workspace.repoViewMode";
+const INSPECTOR_COLLAPSED_KEY = "git-workspace.inspector-collapsed";
 const TAB_HISTORY_LIMIT = 500;
 const FULL_HISTORY_LIMIT = 1000;
 
+function localPullCount(list: BranchInfo[] | undefined): number {
+  if (!list) return 0;
+  return list.filter((b) => b.kind === "local" && (b.behind ?? 0) > 0).length;
+}
+
 export function ProjectDetail() {
   const { projectId = "" } = useParams();
+  const { open: openCtx, menuNode: ctxMenu } = useContextMenu();
   const [detail, setDetail] = useState<ProjectDetailType | null>(null);
   const [statuses, setStatuses] = useState<Record<string, RepoStatus>>({});
   const [branches, setBranches] = useState<Record<string, BranchInfo[]>>({});
@@ -86,6 +100,18 @@ export function ProjectDetail() {
   const [tabFiles, setTabFiles] = useState<ChangedFile[]>([]);
   const [tabDetailLoading, setTabDetailLoading] = useState(false);
   const [tabDetailError, setTabDetailError] = useState<string | null>(null);
+
+  // Focused repo for right inspector (worktree + local branches)
+  const [focusedRepoId, setFocusedRepoId] = useState<string | null>(null);
+  const [inspectorCollapsed, setInspectorCollapsed] = useState(() => {
+    try {
+      return localStorage.getItem(INSPECTOR_COLLAPSED_KEY) === "true";
+    } catch {
+      return false;
+    }
+  });
+  const [inspectorFiles, setInspectorFiles] = useState<ChangedFile[]>([]);
+  const [inspectorFilesLoading, setInspectorFilesLoading] = useState(false);
 
   // Commit modal
   const [commitRepoId, setCommitRepoId] = useState<string | null>(null);
@@ -145,6 +171,30 @@ export function ProjectDetail() {
     }
   }
 
+  function toggleInspector() {
+    setInspectorCollapsed((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem(INSPECTOR_COLLAPSED_KEY, String(next));
+      } catch {
+        /* ignore */
+      }
+      return next;
+    });
+  }
+
+  const loadInspectorFiles = useCallback(async (repoId: string) => {
+    setInspectorFilesLoading(true);
+    try {
+      const files = await listChangedFiles(repoId);
+      setInspectorFiles(files);
+    } catch {
+      setInspectorFiles([]);
+    } finally {
+      setInspectorFilesLoading(false);
+    }
+  }, []);
+
   const loadTabDetail = useCallback(async (repoId: string) => {
     setTabDetailLoading(true);
     setTabDetailError(null);
@@ -198,6 +248,18 @@ export function ProjectDetail() {
     void refresh();
   }, [refresh]);
 
+  // Keep focused repo valid; prefer active tab in tabs mode.
+  useEffect(() => {
+    if (!detail) return;
+    setFocusedRepoId((prev) => {
+      if (viewMode === "tabs" && activeTabId) {
+        if (detail.repos.some((r) => r.id === activeTabId)) return activeTabId;
+      }
+      if (prev && detail.repos.some((r) => r.id === prev)) return prev;
+      return detail.repos[0]?.id ?? null;
+    });
+  }, [detail, viewMode, activeTabId]);
+
   // Load commits + working tree when tab selection / mode changes,
   // and again after project refresh finishes (loading → false).
   useEffect(() => {
@@ -205,12 +267,30 @@ export function ProjectDetail() {
     void loadTabDetail(activeTabId);
   }, [viewMode, activeTabId, loadTabDetail, loading]);
 
+  // Inspector worktree for focused repo
+  useEffect(() => {
+    if (!focusedRepoId || loading) return;
+    void loadInspectorFiles(focusedRepoId);
+  }, [focusedRepoId, loading, loadInspectorFiles]);
+
   async function onCheckout(repoId: string, branch: string) {
     if (!branch) return;
     try {
       const st = await checkoutBranch(repoId, branch, false);
       setStatuses((prev) => ({ ...prev, [repoId]: st }));
+      try {
+        const list = await listBranches(repoId);
+        setBranches((prev) => ({ ...prev, [repoId]: list }));
+      } catch {
+        /* keep previous branch list */
+      }
       setToast({ msg: `Switched to ${branch}` });
+      if (focusedRepoId === repoId) {
+        void loadInspectorFiles(repoId);
+      }
+      if (viewMode === "tabs" && activeTabId === repoId) {
+        void loadTabDetail(repoId);
+      }
     } catch (e) {
       setToast({ msg: String(e), error: true });
     }
@@ -734,6 +814,362 @@ export function ProjectDetail() {
     }
   }
 
+  async function copyText(text: string, label: string) {
+    const ok = await copyToClipboard(text);
+    setToast({
+      msg: ok ? `Copied ${label}` : "Could not copy to clipboard",
+      error: !ok,
+    });
+  }
+
+  function repoContextItems(repo: Repo): ContextMenuItem[] {
+    const st = statuses[repo.id];
+    const busyRow = batchBusy !== null || rowBusy === repo.id;
+    const items: ContextMenuItem[] = [
+      { type: "label", id: "lbl", label: repo.name },
+      {
+        id: "inspect",
+        label: "Inspect",
+        onSelect: () => setFocusedRepoId(repo.id),
+      },
+      {
+        id: "fetch",
+        label: "Fetch",
+        disabled: busyRow,
+        onSelect: () => void runRepoOp(repo.id, "Fetch", fetchRepo),
+      },
+      {
+        id: "pull",
+        label: "Pull",
+        disabled: busyRow,
+        onSelect: () => void runRepoOp(repo.id, "Pull", pullRepo),
+      },
+      {
+        id: "push",
+        label: "Push",
+        disabled: busyRow,
+        onSelect: () => void runRepoOp(repo.id, "Push", pushRepo),
+      },
+      { type: "separator", id: "s1" },
+      {
+        id: "stage",
+        label: "Stage & commit…",
+        disabled: busyRow || !st?.isDirty,
+        onSelect: () => void openCommit(repo.id, repo.name),
+      },
+      {
+        id: "branches",
+        label: "Branches…",
+        disabled: busyRow,
+        onSelect: () => void openBranches(repo.id, repo.name),
+      },
+      {
+        id: "history",
+        label: "History…",
+        disabled: busyRow,
+        onSelect: () => void openHistory(repo.id, repo.name),
+      },
+      {
+        id: "merge",
+        label: "Merge…",
+        disabled: busyRow || !!st?.isDetached,
+        onSelect: () => void openMerge(repo.id, repo.name),
+      },
+      {
+        id: "rebase",
+        label: "Rebase…",
+        disabled: busyRow || !!st?.isDetached,
+        onSelect: () => void openRebase(repo.id, repo.name),
+      },
+    ];
+    if (st?.isMerging) {
+      items.push({
+        id: "abort-merge",
+        label: "Abort merge…",
+        danger: true,
+        disabled: busyRow,
+        onSelect: () => void onAbortMerge(repo.id),
+      });
+    }
+    if (st?.isRebasing) {
+      items.push({
+        id: "abort-rebase",
+        label: "Abort rebase…",
+        danger: true,
+        disabled: busyRow,
+        onSelect: () => void onAbortRebase(repo.id),
+      });
+    }
+    items.push({ type: "separator", id: "s2" });
+    items.push({
+      id: "folder",
+      label: "Open folder",
+      disabled: busyRow,
+      onSelect: () => void onOpenFolder(repo.id),
+    });
+    items.push({
+      id: "copy-path",
+      label: "Copy path",
+      onSelect: () => void copyText(repo.path, "path"),
+    });
+    if (st?.currentBranch) {
+      items.push({
+        id: "copy-branch",
+        label: "Copy current branch",
+        onSelect: () => void copyText(st.currentBranch!, "branch"),
+      });
+    }
+    items.push({ type: "separator", id: "s3" });
+    items.push({
+      id: "toggle",
+      label: repo.enabled ? "Disable for batch ops" : "Enable for batch ops",
+      onSelect: () => void onToggle(repo.id, !repo.enabled),
+    });
+    items.push({
+      id: "remove",
+      label: "Remove from project…",
+      danger: true,
+      disabled: busyRow,
+      onSelect: () => void onRemove(repo.id, repo.name),
+    });
+    return items;
+  }
+
+  function changedFileContextItems(
+    f: ChangedFile,
+    opts: { showDiff?: boolean } = {},
+  ): ContextMenuItem[] {
+    const items: ContextMenuItem[] = [
+      { type: "label", id: "lbl", label: f.path },
+    ];
+    if (opts.showDiff) {
+      items.push({
+        id: "diff",
+        label: "View diff",
+        onSelect: () => void showDiff(f.path),
+      });
+    }
+    if (f.unstaged) {
+      items.push({
+        id: "stage",
+        label: "Stage",
+        disabled: commitBusy,
+        onSelect: () => void applyStagePaths([f.path], "Staged"),
+      });
+    }
+    if (f.staged) {
+      items.push({
+        id: "unstage",
+        label: "Unstage",
+        disabled: commitBusy,
+        onSelect: () => void applyUnstagePaths([f.path], "Unstaged"),
+      });
+    }
+    items.push({
+      id: "discard",
+      label: "Discard changes…",
+      danger: true,
+      disabled: commitBusy,
+      onSelect: () => void discardPaths([f.path]),
+    });
+    items.push({ type: "separator", id: "s1" });
+    items.push({
+      id: "copy",
+      label: "Copy path",
+      onSelect: () => void copyText(f.path, "path"),
+    });
+    return items;
+  }
+
+  function commitContextItems(
+    c: CommitLogEntry,
+    repoId: string | null,
+  ): ContextMenuItem[] {
+    const items: ContextMenuItem[] = [
+      { type: "label", id: "lbl", label: c.shortHash },
+      {
+        id: "copy-short",
+        label: "Copy short hash",
+        onSelect: () => void copyText(c.shortHash, "hash"),
+      },
+      {
+        id: "copy-full",
+        label: "Copy full hash",
+        onSelect: () => void copyText(c.hash, "hash"),
+      },
+      {
+        id: "copy-msg",
+        label: "Copy subject",
+        onSelect: () => void copyText(c.subject, "subject"),
+      },
+    ];
+    if (repoId) {
+      items.push({ type: "separator", id: "s1" });
+      items.push({
+        id: "checkout",
+        label: "Checkout (detached)…",
+        disabled: historyBusy,
+        onSelect: () => {
+          if (historyRepoId !== repoId) {
+            // Allow from tab graph: use checkout with confirm
+            void (async () => {
+              if (
+                !confirm(
+                  `Checkout ${c.shortHash} as detached HEAD?\nWorking tree must be clean.`,
+                )
+              ) {
+                return;
+              }
+              try {
+                const st = await checkoutCommit(repoId, c.hash, null);
+                setStatuses((prev) => ({ ...prev, [repoId]: st }));
+                setToast({ msg: `Detached at ${c.shortHash}` });
+                await refresh();
+              } catch (e) {
+                setToast({ msg: String(e), error: true });
+              }
+            })();
+          } else {
+            void onCheckoutDetached(c.hash);
+          }
+        },
+      });
+      items.push({
+        id: "branch",
+        label: "Create branch here…",
+        disabled: historyBusy,
+        onSelect: () => {
+          const name = window.prompt(
+            `New branch name at ${c.shortHash}:`,
+            "",
+          );
+          if (!name?.trim()) return;
+          void (async () => {
+            try {
+              const st = await checkoutCommit(repoId, c.hash, name.trim());
+              setStatuses((prev) => ({ ...prev, [repoId]: st }));
+              setToast({ msg: `Branch ${name.trim()} at ${c.shortHash}` });
+              await refresh();
+              if (historyRepoId === repoId) setHistoryRepoId(null);
+            } catch (e) {
+              setToast({ msg: String(e), error: true });
+            }
+          })();
+        },
+      });
+    }
+    return items;
+  }
+
+  function branchModalItems(b: BranchInfo): ContextMenuItem[] {
+    if (!branchRepoId) return [];
+    const current =
+      b.isCurrent || statuses[branchRepoId]?.currentBranch === b.name;
+    const items: ContextMenuItem[] = [
+      { type: "label", id: "lbl", label: b.name },
+    ];
+    if (!current) {
+      items.push({
+        id: "checkout",
+        label: "Checkout",
+        disabled: branchBusy,
+        onSelect: () => {
+          void onCheckout(branchRepoId, b.name);
+          setBranchRepoId(null);
+        },
+      });
+      if (b.kind === "local" || b.kind === "remote") {
+        items.push({
+          id: "merge",
+          label: "Merge into current…",
+          disabled: branchBusy,
+          onSelect: () => {
+            void openMerge(branchRepoId, branchRepoName, b.name);
+            setBranchRepoId(null);
+          },
+        });
+        items.push({
+          id: "rebase",
+          label: "Rebase onto this…",
+          disabled: branchBusy,
+          onSelect: () => {
+            void openRebase(branchRepoId, branchRepoName, b.name);
+            setBranchRepoId(null);
+          },
+        });
+      }
+      if (b.kind === "local") {
+        items.push({ type: "separator", id: "s1" });
+        items.push({
+          id: "delete",
+          label: "Delete branch…",
+          danger: true,
+          disabled: branchBusy,
+          onSelect: () => void onDeleteBranchSafe(b.name),
+        });
+      }
+    }
+    items.push({ type: "separator", id: "s2" });
+    items.push({
+      id: "copy",
+      label: "Copy name",
+      onSelect: () => void copyText(b.name, "branch name"),
+    });
+    return items;
+  }
+
+  async function refreshRepoFiles(repoId: string) {
+    if (focusedRepoId === repoId) void loadInspectorFiles(repoId);
+    if (viewMode === "tabs" && activeTabId === repoId) void loadTabDetail(repoId);
+    if (commitRepoId === repoId) void refreshChangedFiles(repoId);
+  }
+
+  async function inspectorStageFile(path: string) {
+    const repoId = focusedRepoId;
+    if (!repoId) return;
+    try {
+      await stageFiles(repoId, [path]);
+      setToast({ msg: `Staged ${path}` });
+      await refreshRepoFiles(repoId);
+      await refresh();
+    } catch (e) {
+      setToast({ msg: String(e), error: true });
+    }
+  }
+
+  async function inspectorUnstageFile(path: string) {
+    const repoId = focusedRepoId;
+    if (!repoId) return;
+    try {
+      await unstageFiles(repoId, [path]);
+      setToast({ msg: `Unstaged ${path}` });
+      await refreshRepoFiles(repoId);
+      await refresh();
+    } catch (e) {
+      setToast({ msg: String(e), error: true });
+    }
+  }
+
+  async function inspectorDiscardFile(path: string) {
+    const repoId = focusedRepoId;
+    if (!repoId) return;
+    if (
+      !confirm(
+        `Discard changes to “${path}”?\nTracked files are restored from HEAD; untracked files are deleted.`,
+      )
+    ) {
+      return;
+    }
+    try {
+      await discardFiles(repoId, [path]);
+      setToast({ msg: `Discarded ${path}` });
+      await refreshRepoFiles(repoId);
+      await refresh();
+    } catch (e) {
+      setToast({ msg: String(e), error: true });
+    }
+  }
+
   async function openMerge(repoId: string, name: string, preselect?: string) {
     setMergeRepoId(repoId);
     setMergeRepoName(name);
@@ -757,18 +1193,22 @@ export function ProjectDetail() {
     }
   }
 
-  async function onRunMerge() {
-    if (!mergeRepoId || !mergeSource) {
-      setToast({ msg: "Pick a branch to merge in", error: true });
-      return;
-    }
-    const cur = statuses[mergeRepoId]?.currentBranch ?? "current branch";
+  async function runMergeForRepo(
+    repoId: string,
+    sourceBranch: string,
+    options: { noFf?: boolean; squash?: boolean } = {},
+    /** When true, also keep modal result state (modal-driven merge) */
+    updateModalResult = false,
+  ) {
+    const cur = statuses[repoId]?.currentBranch ?? "current branch";
+    const noFf = options.noFf ?? false;
+    const squash = options.squash ?? false;
     if (
       !confirm(
-        `Merge “${mergeSource}” into “${cur}”?\n\n` +
-          (mergeSquash
+        `Merge “${sourceBranch}” into “${cur}”?\n\n` +
+          (squash
             ? "Squash merge: changes are staged; you commit yourself.\n"
-            : mergeNoFf
+            : noFf
               ? "No-ff: always create a merge commit.\n"
               : "Fast-forward when possible.\n") +
           "Working tree must be clean.",
@@ -777,26 +1217,57 @@ export function ProjectDetail() {
       return;
     }
     setMergeBusy(true);
-    setMergeResult(null);
+    if (updateModalResult) setMergeResult(null);
     try {
-      const result = await mergeBranch(mergeRepoId, mergeSource, {
-        noFf: mergeNoFf && !mergeSquash,
-        squash: mergeSquash,
+      const result = await mergeBranch(repoId, sourceBranch, {
+        noFf: noFf && !squash,
+        squash,
       });
-      setMergeResult(result);
+      if (updateModalResult) setMergeResult(result);
       setToast({
         msg: result.message,
         error: !result.success,
       });
       await refresh();
-      if (viewMode === "tabs" && activeTabId === mergeRepoId) {
-        void loadTabDetail(mergeRepoId);
+      if (viewMode === "tabs" && activeTabId === repoId) {
+        void loadTabDetail(repoId);
+      }
+      if (focusedRepoId === repoId) {
+        void loadInspectorFiles(repoId);
+      }
+      // From inspector only: surface conflict UI or stage squash result
+      if (!updateModalResult) {
+        if (result.status === "conflict") {
+          const name =
+            detail?.repos.find((r) => r.id === repoId)?.name ?? "repo";
+          void openMerge(repoId, name, sourceBranch);
+        } else if (result.status === "squash_staged") {
+          const name =
+            detail?.repos.find((r) => r.id === repoId)?.name ?? "repo";
+          void openCommit(repoId, name);
+        }
       }
     } catch (e) {
       setToast({ msg: String(e), error: true });
     } finally {
       setMergeBusy(false);
     }
+  }
+
+  async function onRunMerge() {
+    if (!mergeRepoId || !mergeSource) {
+      setToast({ msg: "Pick a branch to merge in", error: true });
+      return;
+    }
+    await runMergeForRepo(
+      mergeRepoId,
+      mergeSource,
+      {
+        noFf: mergeNoFf && !mergeSquash,
+        squash: mergeSquash,
+      },
+      true,
+    );
   }
 
   async function onAbortMerge(repoId: string) {
@@ -948,9 +1419,22 @@ export function ProjectDetail() {
     detail.repos.find((r) => r.id === activeTabId) ?? detail.repos[0] ?? null;
   const activeSt = activeRepo ? statuses[activeRepo.id] : undefined;
   const activeBranches = activeRepo ? (branches[activeRepo.id] ?? []) : [];
+  const focusedRepo =
+    detail.repos.find((r) => r.id === focusedRepoId) ?? activeRepo;
+  const focusedSt = focusedRepo ? statuses[focusedRepo.id] : undefined;
+  const focusedBranches = focusedRepo
+    ? (branches[focusedRepo.id] ?? [])
+    : [];
 
   return (
     <>
+      {ctxMenu}
+      <div
+        className={`project-workspace${
+          inspectorCollapsed ? " inspector-collapsed" : ""
+        }`}
+      >
+        <div className="project-workspace-main">
       <div className="page-header">
         <div>
           <div className="eyebrow">Project workspace</div>
@@ -958,6 +1442,18 @@ export function ProjectDetail() {
           <p className="mono">{detail.project.rootPath ?? "No root path"}</p>
         </div>
         <div className="actions">
+          <button
+            type="button"
+            className="btn"
+            onClick={toggleInspector}
+            title={
+              inspectorCollapsed
+                ? "Show worktree & branches panel"
+                : "Hide worktree & branches panel"
+            }
+          >
+            {inspectorCollapsed ? "Show inspector" : "Hide inspector"}
+          </button>
           <div className="view-mode-toggle" role="group" aria-label="Repo view">
             <button
               type="button"
@@ -1071,13 +1567,23 @@ export function ProjectDetail() {
             const st = statuses[repo.id];
             const repoBranches = branches[repo.id] ?? [];
             const thisBusy = rowBusy === repo.id;
+            const pulls = localPullCount(repoBranches);
+            const focused = focusedRepoId === repo.id;
             return (
               <article
                 key={repo.id}
-                className={`repo-card${repo.enabled ? "" : " disabled"}`}
+                className={`repo-card${repo.enabled ? "" : " disabled"}${
+                  focused ? " focused" : ""
+                }`}
+                onClick={() => setFocusedRepoId(repo.id)}
+                onContextMenu={(e) => openCtx(e, repoContextItems(repo))}
               >
                 <div className="repo-card-main">
-                  <label className="repo-enable" title="Include in batch ops">
+                  <label
+                    className="repo-enable"
+                    title="Include in batch ops"
+                    onClick={(e) => e.stopPropagation()}
+                  >
                     <input
                       type="checkbox"
                       checked={repo.enabled}
@@ -1090,6 +1596,19 @@ export function ProjectDetail() {
                   <div className="repo-card-identity">
                     <div className="repo-card-title-row">
                       <h3 className="repo-card-name">{repo.name}</h3>
+                      {focused ? (
+                        <span className="badge" title="Shown in inspector">
+                          inspecting
+                        </span>
+                      ) : null}
+                      {pulls > 0 ? (
+                        <span
+                          className="badge warn"
+                          title={`${pulls} local branch(es) behind upstream — open inspector`}
+                        >
+                          ↓{pulls} branch{pulls === 1 ? "" : "es"}
+                        </span>
+                      ) : null}
                       {st?.isMerging ? (
                         <span className="badge warn">merging</span>
                       ) : null}
@@ -1151,7 +1670,10 @@ export function ProjectDetail() {
                     ) : null}
                   </div>
 
-                  <div className="repo-card-branch">
+                  <div
+                    className="repo-card-branch"
+                    onClick={(e) => e.stopPropagation()}
+                  >
                     <label className="repo-branch-label muted">Branch</label>
                     <select
                       className="repo-branch-select"
@@ -1205,7 +1727,10 @@ export function ProjectDetail() {
                   </div>
                 </div>
 
-                <div className="repo-card-actions">
+                <div
+                  className="repo-card-actions"
+                  onClick={(e) => e.stopPropagation()}
+                >
                   <div className="repo-actions-primary">
                     <button
                       className="btn btn-sm"
@@ -1315,6 +1840,7 @@ export function ProjectDetail() {
             {detail.repos.map((repo) => {
               const st = statuses[repo.id];
               const selected = (activeTabId ?? detail.repos[0]?.id) === repo.id;
+              const pulls = localPullCount(branches[repo.id]);
               return (
                 <button
                   key={repo.id}
@@ -1324,10 +1850,23 @@ export function ProjectDetail() {
                   className={`repo-tab${selected ? " active" : ""}${
                     repo.enabled ? "" : " disabled"
                   }`}
-                  onClick={() => setActiveTabId(repo.id)}
-                  title={repo.path}
+                  onClick={() => {
+                    setActiveTabId(repo.id);
+                    setFocusedRepoId(repo.id);
+                  }}
+                  onContextMenu={(e) => openCtx(e, repoContextItems(repo))}
+                  title={
+                    pulls > 0
+                      ? `${repo.path} · ${pulls} branch(es) behind upstream`
+                      : repo.path
+                  }
                 >
                   <span className="repo-tab-name">{repo.name}</span>
+                  {pulls > 0 ? (
+                    <span className="repo-tab-pull" title={`${pulls} can pull`}>
+                      ↓{pulls}
+                    </span>
+                  ) : null}
                   {st?.isDirty ? (
                     <span className="repo-tab-dot dirty" title="Dirty" />
                   ) : st?.error ? (
@@ -1582,7 +2121,70 @@ export function ProjectDetail() {
                   ) : (
                     <div className="tab-file-list">
                       {tabFiles.map((f) => (
-                        <div key={f.path} className="tab-file-row">
+                        <div
+                          key={f.path}
+                          className="tab-file-row"
+                          onContextMenu={(e) => {
+                            const items: ContextMenuItem[] = [
+                              { type: "label", id: "lbl", label: f.path },
+                              {
+                                id: "stage-modal",
+                                label: "Open in stage / commit…",
+                                onSelect: () =>
+                                  void openCommit(
+                                    activeRepo.id,
+                                    activeRepo.name,
+                                  ),
+                              },
+                              {
+                                id: "copy",
+                                label: "Copy path",
+                                onSelect: () => void copyText(f.path, "path"),
+                              },
+                            ];
+                            if (f.unstaged) {
+                              items.splice(1, 0, {
+                                id: "stage",
+                                label: "Stage",
+                                onSelect: () => {
+                                  void stageFiles(activeRepo.id, [f.path])
+                                    .then(() => {
+                                      setToast({ msg: `Staged ${f.path}` });
+                                      void loadTabDetail(activeRepo.id);
+                                      void refresh();
+                                    })
+                                    .catch((err) =>
+                                      setToast({
+                                        msg: String(err),
+                                        error: true,
+                                      }),
+                                    );
+                                },
+                              });
+                            }
+                            if (f.staged) {
+                              items.splice(1, 0, {
+                                id: "unstage",
+                                label: "Unstage",
+                                onSelect: () => {
+                                  void unstageFiles(activeRepo.id, [f.path])
+                                    .then(() => {
+                                      setToast({ msg: `Unstaged ${f.path}` });
+                                      void loadTabDetail(activeRepo.id);
+                                      void refresh();
+                                    })
+                                    .catch((err) =>
+                                      setToast({
+                                        msg: String(err),
+                                        error: true,
+                                      }),
+                                    );
+                                },
+                              });
+                            }
+                            openCtx(e, items);
+                          }}
+                        >
                           <span
                             className={`file-status mono status-${
                               f.status === "?"
@@ -1648,7 +2250,12 @@ export function ProjectDetail() {
                     <p className="muted">No commits</p>
                   ) : (
                     <div className="tab-commit-graph-wrap">
-                      <CommitGraph commits={tabCommits} />
+                      <CommitGraph
+                        commits={tabCommits}
+                        onContextMenu={(e, c) =>
+                          openCtx(e, commitContextItems(c, activeRepo.id))
+                        }
+                      />
                       <div className="actions" style={{ marginTop: "0.5rem" }}>
                         <button
                           className="btn btn-sm"
@@ -1667,6 +2274,89 @@ export function ProjectDetail() {
           )}
         </div>
       )}
+        </div>
+
+        <RepoInspector
+          collapsed={inspectorCollapsed}
+          onToggleCollapsed={toggleInspector}
+          repo={focusedRepo}
+          status={focusedSt}
+          branches={focusedBranches}
+          files={
+            viewMode === "tabs" &&
+            activeTabId &&
+            focusedRepo?.id === activeTabId
+              ? tabFiles
+              : inspectorFiles
+          }
+          filesLoading={
+            viewMode === "tabs" &&
+            activeTabId &&
+            focusedRepo?.id === activeTabId
+              ? tabDetailLoading
+              : inspectorFilesLoading
+          }
+          busy={busy}
+          mergeBusy={mergeBusy}
+          onRefreshFiles={() => {
+            if (!focusedRepo) return;
+            if (viewMode === "tabs" && activeTabId === focusedRepo.id) {
+              void loadTabDetail(focusedRepo.id);
+            } else {
+              void loadInspectorFiles(focusedRepo.id);
+            }
+          }}
+          onOpenStage={() => {
+            if (focusedRepo) void openCommit(focusedRepo.id, focusedRepo.name);
+          }}
+          onCheckout={(branch) => {
+            if (focusedRepo) void onCheckout(focusedRepo.id, branch);
+          }}
+          onOpenBranches={() => {
+            if (focusedRepo) void openBranches(focusedRepo.id, focusedRepo.name);
+          }}
+          onFetch={() => {
+            if (!focusedRepo) return;
+            void runRepoOp(focusedRepo.id, "Fetch", fetchRepo);
+          }}
+          onMerge={(sourceBranch, options) => {
+            if (!focusedRepo) return;
+            void runMergeForRepo(focusedRepo.id, sourceBranch, options);
+          }}
+          onAbortMerge={() => {
+            if (!focusedRepo) return;
+            void onAbortMerge(focusedRepo.id);
+          }}
+          onOpenMergeModal={(preselect) => {
+            if (!focusedRepo) return;
+            void openMerge(focusedRepo.id, focusedRepo.name, preselect);
+          }}
+          onRebase={(onto) => {
+            if (!focusedRepo) return;
+            void openRebase(focusedRepo.id, focusedRepo.name, onto);
+          }}
+          onOpenFolder={() => {
+            if (!focusedRepo) return;
+            void onOpenFolder(focusedRepo.id);
+          }}
+          onOpenHistory={() => {
+            if (!focusedRepo) return;
+            void openHistory(focusedRepo.id, focusedRepo.name);
+          }}
+          onPull={() => {
+            if (!focusedRepo) return;
+            void runRepoOp(focusedRepo.id, "Pull", pullRepo);
+          }}
+          onPush={() => {
+            if (!focusedRepo) return;
+            void runRepoOp(focusedRepo.id, "Push", pushRepo);
+          }}
+          onStageFile={(path) => void inspectorStageFile(path)}
+          onUnstageFile={(path) => void inspectorUnstageFile(path)}
+          onDiscardFile={(path) => void inspectorDiscardFile(path)}
+          onToast={(msg, error) => setToast({ msg, error })}
+        />
+      </div>
 
       {/* Stage / Commit modal */}
       {commitRepoId && (
@@ -1752,6 +2442,12 @@ export function ProjectDetail() {
                         <div
                           key={f.path}
                           className={`file-row-wrap${active ? " active" : ""}`}
+                          onContextMenu={(e) =>
+                            openCtx(
+                              e,
+                              changedFileContextItems(f, { showDiff: true }),
+                            )
+                          }
                         >
                           <label className="file-row">
                             <input
@@ -1935,6 +2631,9 @@ export function ProjectDetail() {
               <div className="history-graph-wrap">
                 <CommitGraph
                   commits={historyEntries}
+                  onContextMenu={(e, c) =>
+                    openCtx(e, commitContextItems(c, historyRepoId))
+                  }
                   actions={(e) => (
                     <div className="row-actions">
                       <button
@@ -2506,13 +3205,34 @@ export function ProjectDetail() {
                         .filter((b) => b.kind === "local")
                         .map((b) => {
                           const current =
+                            b.isCurrent ||
                             statuses[branchRepoId]?.currentBranch === b.name;
+                          const ahead = b.ahead ?? 0;
+                          const behind = b.behind ?? 0;
                           return (
-                            <div key={b.name} className="file-row-wrap">
-                              <span className="mono file-path">
-                                {b.name}
-                                {current ? " ★" : ""}
-                              </span>
+                            <div
+                              key={b.name}
+                              className="file-row-wrap"
+                              onContextMenu={(e) =>
+                                openCtx(e, branchModalItems(b))
+                              }
+                            >
+                              <div className="branch-row-meta">
+                                <span className="mono file-path">
+                                  {b.name}
+                                  {current ? " ★" : ""}
+                                </span>
+                                <span className="branch-sync muted mono">
+                                  {b.upstreamGone
+                                    ? "upstream gone"
+                                    : b.upstream
+                                      ? `${b.upstream} · ↑${ahead} ↓${behind}`
+                                      : "no upstream"}
+                                </span>
+                                {behind > 0 ? (
+                                  <span className="badge warn">pull available</span>
+                                ) : null}
+                              </div>
                               <div className="row-actions">
                                 {!current && (
                                   <>
@@ -2597,7 +3317,13 @@ export function ProjectDetail() {
                             statuses[branchRepoId]?.currentBranch ===
                             b.shortName;
                           return (
-                            <div key={b.name} className="file-row-wrap">
+                            <div
+                              key={b.name}
+                              className="file-row-wrap"
+                              onContextMenu={(e) =>
+                                openCtx(e, branchModalItems(b))
+                              }
+                            >
                               <span className="mono file-path" title={b.name}>
                                 {b.name}
                                 {current ? " ★" : ""}
