@@ -96,21 +96,37 @@ a:hover {
 }
 
 .sidebar-header {
+  position: relative;
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  min-height: 50px;
-  padding: 0.2rem 0.2rem 1.1rem 0.55rem;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 0.3rem;
+  min-height: 176px;
+  padding: 0 0.2rem 0.9rem;
+}
+
+.brand-lockup {
+  display: grid;
+  justify-items: center;
+  gap: 0.35rem;
+  width: 100%;
 }
 
 .brand {
   display: flex;
   align-items: center;
-  gap: 0.7rem;
+  justify-content: center;
+  width: 132px;
+  flex: 0 1 132px;
   min-width: 0;
+  margin-inline: auto;
+  border-radius: 12px;
 }
 
 .sidebar-toggle {
+  position: absolute;
+  top: 0;
+  right: 0.2rem;
   display: grid;
   width: 30px;
   height: 30px;
@@ -131,30 +147,13 @@ a:hover {
   color: var(--text);
 }
 
-.brand-mark {
-  width: 38px;
-  height: 38px;
-  display: grid;
-  place-items: center;
-  color: #e7e5df;
-  border: 1px solid #3a3e43;
-  border-radius: 12px;
-  background: linear-gradient(145deg, #292c30, #1d2023);
-  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.26), inset 0 1px rgba(255, 255, 255, 0.08);
+.brand-logo {
+  display: block;
+  width: 128px;
+  max-width: 100%;
+  height: auto;
 }
 
-.brand-copy {
-  display: grid;
-  gap: 0.02rem;
-  min-width: 0;
-}
-
-.brand-copy strong {
-  font-size: 0.96rem;
-  letter-spacing: -0.01em;
-}
-
-.brand-copy small,
 .sidebar-footer small,
 .workspace-context small {
   color: var(--text-faint);
@@ -2501,6 +2500,28 @@ select:focus {
   font-weight: 600;
 }
 
+.company-brand {
+  display: grid;
+  gap: 0.08rem;
+  color: var(--text-faint);
+  font-size: 0.68rem;
+  line-height: 1.35;
+  text-align: center;
+}
+
+.company-brand strong {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.25rem;
+  color: #80a797;
+}
+
+.company-brand:hover,
+.company-brand:hover strong {
+  color: #a8cfbd;
+}
+
 .connection-dot {
   width: 7px;
   height: 7px;
@@ -2521,7 +2542,7 @@ select:focus {
   min-height: 30px;
 }
 
-.sidebar-collapsed .brand {
+.sidebar-collapsed .brand-lockup {
   display: none;
 }
 
@@ -3109,7 +3130,6 @@ tbody tr:hover {
     grid-template-columns: 218px minmax(0, 1fr);
   }
 
-  .brand-copy small,
   .sidebar-footer small {
     display: none;
   }
@@ -3164,9 +3184,10 @@ tbody tr:hover {
   .sidebar-header {
     justify-content: center;
     padding-inline: 0;
+    min-height: 30px;
   }
 
-  .brand-copy,
+  .brand-lockup,
   .nav-link > span:not(.nav-active-mark),
   .nav-section,
   .workspace-context,

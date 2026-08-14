@@ -70,14 +70,23 @@ export function Layout() {
     >
       <aside id="app-sidebar" className="sidebar">
         <div className="sidebar-header">
-          <div className="brand">
-            <span className="brand-mark">
-              <Icon name="branch" size={21} />
-            </span>
-            <span className="brand-copy">
-              <strong>Git Workspace</strong>
-              <small>Developer console</small>
-            </span>
+          <div className="brand-lockup">
+            <NavLink to="/" className="brand" aria-label="GitDweep home">
+              <img
+                className="brand-logo"
+                src="/brand/gitdweep-logo.svg"
+                alt="GitDweep"
+              />
+            </NavLink>
+            <a
+              className="company-brand"
+              href="https://technodweep.com"
+              target="_blank"
+              rel="noreferrer"
+            >
+              <span>A Technodweep product</span>
+              <strong>technodweep.com <span aria-hidden="true">↗</span></strong>
+            </a>
           </div>
           <button
             className="sidebar-toggle"
