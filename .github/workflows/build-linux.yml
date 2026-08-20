@@ -1,0 +1,82 @@
+name: Build Linux packages
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  build-linux-amd64:
+    name: Ubuntu 22.04 compatible (amd64)
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Install Tauri system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential \
+            file \
+            libayatana-appindicator3-dev \
+            libfuse2 \
+            libgtk-3-dev \
+            librsvg2-dev \
+            libssl-dev \
+            libwebkit2gtk-4.1-dev \
+            patchelf \
+            pkg-config
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust build output
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Build Debian and AppImage packages
+        env:
+          PKG_CONFIG: /usr/bin/pkg-config
+        run: npm run tauri:build -- --bundles deb,appimage
+
+      - name: Verify Ubuntu 22.04 GLIBC compatibility
+        shell: bash
+        run: |
+          highest_glibc="$({ objdump -T src-tauri/target/release/git-workspace || true; } \
+            | sed -n 's/.*GLIBC_\([0-9][0-9.]*\).*/\1/p' \
+            | sort -V \
+            | tail -1)"
+          echo "Highest required GLIBC version: ${highest_glibc}"
+          if [[ -z "${highest_glibc}" ]]; then
+            echo "Could not determine the executable's GLIBC requirement."
+            exit 1
+          fi
+          if dpkg --compare-versions "${highest_glibc}" gt "2.35"; then
+            echo "The binary is not compatible with Ubuntu 22.04 (GLIBC 2.35)."
+            exit 1
+          fi
+
+      - name: Upload Linux installers
+        uses: actions/upload-artifact@v4
+        with:
+          name: GitDweep-linux-amd64-ubuntu-22.04-plus
+          if-no-files-found: error
+          path: |
+            src-tauri/target/release/bundle/deb/*.deb
+            src-tauri/target/release/bundle/appimage/*.AppImage
