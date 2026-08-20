@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="./public/brand/gitdweep-logo-vector.svg" width="180" alt="GitDweep logo — multi-repository desktop Git GUI" />
+  <img src="./public/brand/gitdweep-logo.svg" width="180" alt="GitDweep logo — multi-repository desktop Git GUI" />
 </p>
 
 <h1 align="center">GitDweep — Multi-Repository Git GUI</h1>
