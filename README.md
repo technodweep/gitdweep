@@ -49,7 +49,8 @@ _Preview branch targets and repository status before switching a complete projec
 - View repositories as a list or as tabs with commits and working-tree changes.
 - See branch, dirty, and ahead/behind status at a glance.
 - Run `fetch --all --prune`, fast-forward-only pull, or push across enabled repositories.
-- Fetch, pull, push, stage, unstage, discard, commit, and inspect diffs per repository.
+- Fetch and preview pulls per repository, then fast-forward or merge clean divergence with conflicts preserved for resolution.
+- Pull, push, stage, unstage, discard, commit, and inspect diffs per repository.
 - Browse commit history, detach at a commit, or create a branch from a commit.
 - Create and delete branches or switch a single repository to a local or remote branch.
 - Build reusable environment-to-branch mappings for every repository in a project.

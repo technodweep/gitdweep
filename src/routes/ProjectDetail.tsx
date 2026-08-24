@@ -21,6 +21,7 @@ import {
   openRepoFolder,
   pickFolder,
   pullAll,
+  previewPull,
   pullRepo,
   pushAll,
   pushRepo,
@@ -41,6 +42,7 @@ import type {
   CommitLogEntry,
   MergeResult,
   ProjectDetail as ProjectDetailType,
+  PullPreview,
   PullResult,
   RebaseResult,
   Repo,
@@ -59,6 +61,7 @@ import {
 import { Icon } from "../components/Icon";
 
 type BatchKind = "pull" | "fetch" | "push";
+type PullStrategy = "merge" | "ff_only";
 type RepoViewMode = "list" | "tabs";
 
 const VIEW_MODE_KEY = "git-workspace.repoViewMode";
@@ -85,6 +88,15 @@ export function ProjectDetail() {
     kind: BatchKind;
     items: PullResult[];
   } | null>(null);
+
+  // Guided single-repository pull
+  const [pullRepoId, setPullRepoId] = useState<string | null>(null);
+  const [pullRepoName, setPullRepoName] = useState("");
+  const [pullPreview, setPullPreview] = useState<PullPreview | null>(null);
+  const [pullResult, setPullResult] = useState<PullResult | null>(null);
+  const [pullStrategy, setPullStrategy] = useState<PullStrategy>("merge");
+  const [pullBusy, setPullBusy] = useState(false);
+  const [pullError, setPullError] = useState<string | null>(null);
 
   // List vs tabbed repo detail
   const [viewMode, setViewMode] = useState<RepoViewMode>(() => {
@@ -398,6 +410,76 @@ export function ProjectDetail() {
     } finally {
       setRowBusy(null);
     }
+  }
+
+  async function openPull(repoId: string, name: string) {
+    setPullRepoId(repoId);
+    setPullRepoName(name);
+    setPullPreview(null);
+    setPullResult(null);
+    setPullStrategy("merge");
+    setPullError(null);
+    setPullBusy(true);
+    setRowBusy(repoId);
+    try {
+      const preview = await previewPull(repoId);
+      setPullPreview(preview);
+      await refresh();
+    } catch (e) {
+      const message = String(e);
+      setPullError(message);
+      setToast({ msg: message, error: true });
+    } finally {
+      setPullBusy(false);
+      setRowBusy(null);
+    }
+  }
+
+  async function onRunPull() {
+    if (!pullRepoId || !pullPreview || pullPreview.action === "up_to_date") {
+      return;
+    }
+    setPullBusy(true);
+    setRowBusy(pullRepoId);
+    setPullResult(null);
+    setPullError(null);
+    try {
+      const result = await pullRepo(pullRepoId, pullStrategy);
+      setPullResult(result);
+      setToast({ msg: result.message, error: !result.success });
+      await refresh();
+      if (viewMode === "tabs" && activeTabId === pullRepoId) {
+        void loadTabDetail(pullRepoId);
+      }
+      if (focusedRepoId === pullRepoId) {
+        void loadInspectorFiles(pullRepoId);
+      }
+    } catch (e) {
+      const message = String(e);
+      setPullError(message);
+      setToast({ msg: message, error: true });
+    } finally {
+      setPullBusy(false);
+      setRowBusy(null);
+    }
+  }
+
+  function openPullConflictResolver() {
+    if (!pullRepoId || !pullPreview) return;
+    const repoId = pullRepoId;
+    const repoName = pullRepoName;
+    const upstream = pullPreview.upstream;
+    setPullRepoId(null);
+    void openMerge(repoId, repoName, upstream);
+  }
+
+  function openPullRebase() {
+    if (!pullRepoId || !pullPreview) return;
+    const repoId = pullRepoId;
+    const repoName = pullRepoName;
+    const upstream = pullPreview.upstream;
+    setPullRepoId(null);
+    void openRebase(repoId, repoName, upstream);
   }
 
   async function refreshChangedFiles(repoId: string) {
@@ -842,7 +924,7 @@ export function ProjectDetail() {
         id: "pull",
         label: "Pull",
         disabled: busyRow,
-        onSelect: () => void runRepoOp(repo.id, "Pull", pullRepo),
+        onSelect: () => void openPull(repo.id, repo.name),
       },
       {
         id: "push",
@@ -1272,7 +1354,7 @@ export function ProjectDetail() {
 
   async function onAbortMerge(repoId: string) {
     if (!confirm("Abort the in-progress merge? Conflict resolutions will be lost.")) {
-      return;
+      return false;
     }
     try {
       const st = await mergeAbort(repoId);
@@ -1283,8 +1365,10 @@ export function ProjectDetail() {
       if (viewMode === "tabs" && activeTabId === repoId) {
         void loadTabDetail(repoId);
       }
+      return true;
     } catch (e) {
       setToast({ msg: String(e), error: true });
+      return false;
     }
   }
 
@@ -1744,7 +1828,7 @@ export function ProjectDetail() {
                     <button
                       className="btn btn-sm"
                       disabled={busy}
-                      onClick={() => void runRepoOp(repo.id, "Pull", pullRepo)}
+                      onClick={() => void openPull(repo.id, repo.name)}
                     >
                       Pull
                     </button>
@@ -1997,11 +2081,7 @@ export function ProjectDetail() {
                   <button
                     className="btn btn-sm"
                     disabled={busy}
-                    onClick={() =>
-                      void runRepoOp(activeRepo.id, "Pull", pullRepo).then(
-                        () => loadTabDetail(activeRepo.id),
-                      )
-                    }
+                    onClick={() => void openPull(activeRepo.id, activeRepo.name)}
                   >
                     Pull
                   </button>
@@ -2345,7 +2425,7 @@ export function ProjectDetail() {
           }}
           onPull={() => {
             if (!focusedRepo) return;
-            void runRepoOp(focusedRepo.id, "Pull", pullRepo);
+            void openPull(focusedRepo.id, focusedRepo.name);
           }}
           onPush={() => {
             if (!focusedRepo) return;
@@ -2653,6 +2733,233 @@ export function ProjectDetail() {
                     </div>
                   )}
                 />
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Guided pull modal */}
+      {pullRepoId && (
+        <div
+          className="modal-backdrop"
+          onClick={() => {
+            if (!pullBusy) setPullRepoId(null);
+          }}
+        >
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <h2>Pull — {pullRepoName}</h2>
+            <p className="muted" style={{ marginTop: 0 }}>
+              Fetch the configured upstream, preview the update, then choose how
+              divergent history should be handled.
+            </p>
+
+            {pullBusy && !pullPreview ? (
+              <div className="pull-loading">
+                <span className="status-dot" /> Fetching and comparing with
+                upstream…
+              </div>
+            ) : null}
+
+            {pullError ? (
+              <div className="merge-panel conflict">
+                <strong>Pull cannot continue</strong>
+                <p style={{ marginBottom: 0 }}>{pullError}</p>
+              </div>
+            ) : null}
+
+            {pullPreview ? (
+              <div className="form-grid">
+                <div className="pull-route" aria-label="Pull branch mapping">
+                  <div>
+                    <span className="muted">Current branch</span>
+                    <strong className="mono">{pullPreview.branch}</strong>
+                  </div>
+                  <span className="pull-route-arrow" aria-hidden="true">
+                    ←
+                  </span>
+                  <div>
+                    <span className="muted">Upstream</span>
+                    <strong className="mono">{pullPreview.upstream}</strong>
+                  </div>
+                </div>
+
+                <div
+                  className={`merge-panel${
+                    pullPreview.action === "merge" ? " conflict" : " ok"
+                  }`}
+                >
+                  <div className="pull-preview-heading">
+                    <span
+                      className={`badge ${
+                        pullPreview.action === "merge" ? "warn" : "ok"
+                      }`}
+                    >
+                      {pullPreview.action === "up_to_date"
+                        ? "Already up to date"
+                        : pullPreview.action === "fast_forward"
+                          ? `Fast-forward · ${pullPreview.behind} commit${
+                              pullPreview.behind === 1 ? "" : "s"
+                            }`
+                          : "Merge required"}
+                    </span>
+                    <span className="muted mono">
+                      ↑{pullPreview.ahead} ↓{pullPreview.behind} · {pullPreview.currentHead}
+                    </span>
+                  </div>
+                  <p style={{ marginBottom: 0 }}>{pullPreview.message}</p>
+                  {pullPreview.action === "merge" ? (
+                    <p className="muted" style={{ marginBottom: 0 }}>
+                      Git will commit automatically only if the merge is clean.
+                      If it finds conflicts, the pull stops for resolution.
+                    </p>
+                  ) : null}
+                </div>
+
+                {pullPreview.action !== "up_to_date" &&
+                pullResult?.status !== "conflict" &&
+                pullResult?.status !== "merge_in_progress" &&
+                !pullResult?.success ? (
+                  <label>
+                    Pull strategy
+                    <select
+                      value={pullStrategy}
+                      disabled={pullBusy}
+                      onChange={(e) => {
+                        setPullStrategy(e.target.value as PullStrategy);
+                        setPullResult(null);
+                      }}
+                    >
+                      <option value="merge">
+                        Fast-forward, otherwise merge (recommended)
+                      </option>
+                      <option value="ff_only">Fast-forward only</option>
+                    </select>
+                  </label>
+                ) : null}
+
+                {pullStrategy === "ff_only" &&
+                pullPreview.action === "merge" &&
+                !pullResult ? (
+                  <div className="merge-banner">
+                    Fast-forward only cannot pull this branch because its history
+                    has diverged. Choose the recommended merge strategy or rebase.
+                  </div>
+                ) : null}
+
+                {pullResult ? (
+                  <div
+                    className={`merge-panel${
+                      pullResult.status === "conflict" || !pullResult.success
+                        ? " conflict"
+                        : " ok"
+                    }`}
+                  >
+                    <div className="pull-preview-heading">
+                      <span
+                        className={`badge ${pullResult.success ? "ok" : "err"}`}
+                      >
+                        {pullResult.status?.replace(/_/g, " ") ??
+                          (pullResult.success ? "complete" : "failed")}
+                      </span>
+                      {pullResult.beforeHead ? (
+                        <span className="muted mono">
+                          {pullResult.beforeHead}
+                          {pullResult.afterHead &&
+                          pullResult.afterHead !== pullResult.beforeHead
+                            ? ` → ${pullResult.afterHead}`
+                            : ""}
+                        </span>
+                      ) : null}
+                    </div>
+                    <p style={{ marginBottom: 0 }}>{pullResult.message}</p>
+                    {(pullResult.conflictFiles?.length ?? 0) > 0 ? (
+                      <ul className="result-list">
+                        {pullResult.conflictFiles!.map((file) => (
+                          <li key={file} className="mono">
+                            {file}
+                          </li>
+                        ))}
+                      </ul>
+                    ) : null}
+                    {pullResult.status === "conflict" ||
+                    pullResult.status === "merge_in_progress" ? (
+                      <div className="actions" style={{ marginTop: "0.75rem" }}>
+                        <button
+                          className="btn btn-primary"
+                          onClick={openPullConflictResolver}
+                        >
+                          {pullResult.status === "conflict"
+                            ? "Resolve merge conflicts"
+                            : "Finish merge"}
+                        </button>
+                        <button
+                          className="btn btn-danger"
+                          onClick={() =>
+                            void onAbortMerge(pullRepoId).then((aborted) => {
+                              if (aborted) setPullRepoId(null);
+                            })
+                          }
+                        >
+                          Abort merge
+                        </button>
+                      </div>
+                    ) : null}
+                  </div>
+                ) : null}
+
+                <div className="actions pull-actions">
+                  <button
+                    className="btn"
+                    disabled={pullBusy}
+                    onClick={() => setPullRepoId(null)}
+                  >
+                    Close
+                  </button>
+                  <span className="pull-actions-spacer" />
+                  {pullPreview.action === "merge" &&
+                  pullResult?.status !== "conflict" &&
+                  pullResult?.status !== "merge_in_progress" &&
+                  !pullResult?.success ? (
+                    <button
+                      className="btn"
+                      disabled={pullBusy}
+                      onClick={openPullRebase}
+                    >
+                      Rebase instead…
+                    </button>
+                  ) : null}
+                  {pullPreview.action !== "up_to_date" &&
+                  pullResult?.status !== "conflict" &&
+                  pullResult?.status !== "merge_in_progress" &&
+                  !pullResult?.success ? (
+                    <button
+                      className="btn btn-primary"
+                      disabled={
+                        pullBusy ||
+                        (pullStrategy === "ff_only" &&
+                          pullPreview.action === "merge")
+                      }
+                      onClick={() => void onRunPull()}
+                    >
+                      {pullBusy
+                        ? "Pulling…"
+                        : pullPreview.action === "merge"
+                          ? "Pull and merge"
+                          : "Pull fast-forward"}
+                    </button>
+                  ) : null}
+                </div>
+              </div>
+            ) : (
+              <div className="actions" style={{ justifyContent: "flex-end", marginTop: "1rem" }}>
+                <button
+                  className="btn"
+                  disabled={pullBusy}
+                  onClick={() => setPullRepoId(null)}
+                >
+                  Close
+                </button>
               </div>
             )}
           </div>

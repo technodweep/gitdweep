@@ -124,6 +124,33 @@ export interface PullResult {
   path: string;
   success: boolean;
   message: string;
+  status?:
+    | "up_to_date"
+    | "fast_forwarded"
+    | "merged"
+    | "conflict"
+    | "merge_in_progress"
+    | "needs_merge";
+  branch?: string;
+  upstream?: string;
+  ahead?: number;
+  behind?: number;
+  beforeHead?: string;
+  afterHead?: string;
+  conflictFiles?: string[];
+}
+
+export interface PullPreview {
+  repoId: string;
+  repoName: string;
+  path: string;
+  branch: string;
+  upstream: string;
+  currentHead: string;
+  ahead: number;
+  behind: number;
+  action: "up_to_date" | "fast_forward" | "merge";
+  message: string;
 }
 
 export interface SwitchPreviewItem {

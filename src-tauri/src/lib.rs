@@ -67,6 +67,7 @@ pub fn run() {
             commands::switch_environment,
             commands::preview_switch_environment,
             commands::pull_all,
+            commands::preview_pull,
             commands::fetch_all_repos,
             commands::push_all,
             commands::pull_repo,

@@ -14,6 +14,7 @@ import type {
   ProjectDetail,
   ProjectSummary,
   PullResult,
+  PullPreview,
   Repo,
   RepoStatus,
   ScannedRepo,
@@ -154,8 +155,15 @@ export async function pushAll(projectId: string): Promise<PullResult[]> {
   return invoke("push_all", { projectId });
 }
 
-export async function pullRepo(repoId: string): Promise<PullResult> {
-  return invoke("pull_repo", { repoId });
+export async function previewPull(repoId: string): Promise<PullPreview> {
+  return invoke("preview_pull", { repoId });
+}
+
+export async function pullRepo(
+  repoId: string,
+  strategy: "merge" | "ff_only" = "merge",
+): Promise<PullResult> {
+  return invoke("pull_repo", { repoId, strategy });
 }
 
 export async function pushRepo(repoId: string): Promise<PullResult> {

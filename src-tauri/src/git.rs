@@ -356,12 +356,219 @@ pub fn fetch_all(path: &str) -> Result<String, String> {
     run_git_with_stderr(p, &["fetch", "--all", "--prune"])
 }
 
-pub fn pull(path: &str) -> Result<String, String> {
+/// Conservative pull used by the multi-repository batch action.
+pub fn pull_ff_only(path: &str) -> Result<String, String> {
     let p = Path::new(path);
     if is_dirty(path)? {
         return Err("Working tree has uncommitted changes".into());
     }
     run_git_with_stderr(p, &["pull", "--ff-only"])
+}
+
+#[derive(Debug, Clone)]
+pub struct PullPlan {
+    pub branch: String,
+    pub upstream: String,
+    pub current_head: String,
+    pub ahead: i64,
+    pub behind: i64,
+    pub action: String,
+    pub message: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct PullOutcome {
+    pub success: bool,
+    pub status: String,
+    pub message: String,
+    pub branch: String,
+    pub upstream: String,
+    pub ahead: i64,
+    pub behind: i64,
+    pub before_head: String,
+    pub after_head: Option<String>,
+    pub conflict_files: Vec<String>,
+}
+
+/// Fetch the configured upstream and describe exactly what a pull would do.
+pub fn preview_pull(path: &str) -> Result<PullPlan, String> {
+    let p = Path::new(path);
+    if !p.exists() {
+        return Err(format!("Path does not exist: {path}"));
+    }
+    if run_git(p, &["rev-parse", "-q", "--verify", "MERGE_HEAD"]).is_ok() {
+        return Err("A merge is already in progress. Finish or abort it before pulling.".into());
+    }
+    if is_rebase_in_progress(p) {
+        return Err("A rebase is already in progress. Finish or abort it before pulling.".into());
+    }
+    if is_dirty(path)? {
+        return Err(
+            "Working tree has uncommitted changes. Commit, stash, or discard them before pulling."
+                .into(),
+        );
+    }
+
+    let branch = current_branch(path)?
+        .ok_or_else(|| "Detached HEAD — check out a branch before pulling".to_string())?;
+    let upstream = run_git(
+        p,
+        &["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"],
+    )
+    .map_err(|_| format!("Branch {branch} has no upstream. Set an upstream before pulling."))?;
+
+    // With no explicit remote, Git follows branch.<name>.remote and the normal
+    // fetch configuration for the checked-out branch.
+    run_git_with_stderr(p, &["fetch", "--prune"])?;
+
+    let current_head = run_git(p, &["rev-parse", "--short", "HEAD"])?;
+    let (ahead, behind) = ahead_behind(p);
+    let ahead = ahead.ok_or_else(|| format!("Could not compare {branch} with {upstream}"))?;
+    let behind = behind.ok_or_else(|| format!("Could not compare {branch} with {upstream}"))?;
+
+    let (action, message) = if behind == 0 {
+        let detail = if ahead == 0 {
+            format!("Already up to date with {upstream} at {current_head}.")
+        } else {
+            format!(
+                "{upstream} is already integrated; {branch} is {ahead} local commit(s) ahead."
+            )
+        };
+        ("up_to_date", detail)
+    } else if ahead == 0 {
+        (
+            "fast_forward",
+            format!("{branch} will fast-forward by {behind} commit(s) from {upstream}."),
+        )
+    } else {
+        (
+            "merge",
+            format!(
+                "Branches diverged: {ahead} local and {behind} remote commit(s). Pull will create a merge commit if the changes combine cleanly."
+            ),
+        )
+    };
+
+    Ok(PullPlan {
+        branch,
+        upstream,
+        current_head,
+        ahead,
+        behind,
+        action: action.into(),
+        message,
+    })
+}
+
+/// Pull the checked-out branch after fetching. Fast-forward whenever possible;
+/// when `allow_merge` is true, merge divergent history using Git's default
+/// merge strategy and preserve any conflict state for the GUI resolver.
+pub fn pull_with_strategy(path: &str, allow_merge: bool) -> Result<PullOutcome, String> {
+    let p = Path::new(path);
+    let plan = preview_pull(path)?;
+    let base = |success: bool,
+                status: &str,
+                message: String,
+                after_head: Option<String>,
+                conflict_files: Vec<String>| PullOutcome {
+        success,
+        status: status.into(),
+        message,
+        branch: plan.branch.clone(),
+        upstream: plan.upstream.clone(),
+        ahead: plan.ahead,
+        behind: plan.behind,
+        before_head: plan.current_head.clone(),
+        after_head,
+        conflict_files,
+    };
+
+    if plan.action == "up_to_date" {
+        return Ok(base(
+            true,
+            "up_to_date",
+            plan.message.clone(),
+            Some(plan.current_head.clone()),
+            Vec::new(),
+        ));
+    }
+    if plan.action == "merge" && !allow_merge {
+        return Ok(base(
+            false,
+            "needs_merge",
+            format!(
+                "Fast-forward only cannot update {}: it is {} commit(s) ahead and {} behind {}.",
+                plan.branch, plan.ahead, plan.behind, plan.upstream
+            ),
+            None,
+            Vec::new(),
+        ));
+    }
+
+    let args = if plan.action == "fast_forward" {
+        vec!["merge", "--ff-only", plan.upstream.as_str()]
+    } else {
+        vec!["merge", "--no-edit", plan.upstream.as_str()]
+    };
+
+    match run_git_with_stderr(p, &args) {
+        Ok(_) => {
+            let after_head = run_git(p, &["rev-parse", "--short", "HEAD"])?;
+            if plan.action == "fast_forward" {
+                Ok(base(
+                    true,
+                    "fast_forwarded",
+                    format!(
+                        "Fast-forwarded {} from {} to {} ({} commit(s)).",
+                        plan.branch, plan.current_head, after_head, plan.behind
+                    ),
+                    Some(after_head),
+                    Vec::new(),
+                ))
+            } else {
+                Ok(base(
+                    true,
+                    "merged",
+                    format!(
+                        "Merged {} into {} as {} ({} local, {} remote commit(s)).",
+                        plan.upstream, plan.branch, after_head, plan.ahead, plan.behind
+                    ),
+                    Some(after_head),
+                    Vec::new(),
+                ))
+            }
+        }
+        Err(e) => {
+            let conflicts = conflicted_paths(p);
+            let merging = run_git(p, &["rev-parse", "-q", "--verify", "MERGE_HEAD"]).is_ok();
+            if !conflicts.is_empty() {
+                Ok(base(
+                    false,
+                    "conflict",
+                    format!(
+                        "Fetched {}, but the merge stopped with conflicts in {} file(s). Resolve them and commit, or abort the merge.",
+                        plan.upstream,
+                        conflicts.len()
+                    ),
+                    None,
+                    conflicts,
+                ))
+            } else if merging {
+                Ok(base(
+                    false,
+                    "merge_in_progress",
+                    format!(
+                        "Git combined the changes but could not create the merge commit. Finish the merge by committing, or abort it. Git reported: {}",
+                        truncate_msg(&e, 240)
+                    ),
+                    None,
+                    Vec::new(),
+                ))
+            } else {
+                Err(truncate_msg(&e, 500))
+            }
+        }
+    }
 }
 
 /// Push current branch. Sets upstream to origin if missing.
@@ -1362,4 +1569,157 @@ pub fn checkout_branch(
         stashed,
         already_on: false,
     })
+}
+
+#[cfg(test)]
+mod pull_tests {
+    use super::*;
+    use std::fs;
+    use std::path::{Path, PathBuf};
+    use std::process::Command;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    struct TestRepos {
+        root: PathBuf,
+        local: PathBuf,
+        peer: PathBuf,
+    }
+
+    impl Drop for TestRepos {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.root);
+        }
+    }
+
+    fn git_ok(cwd: &Path, args: &[&str]) -> String {
+        let output = Command::new("git")
+            .args(args)
+            .current_dir(cwd)
+            .output()
+            .expect("git should start");
+        assert!(
+            output.status.success(),
+            "git {:?} failed:\nstdout: {}\nstderr: {}",
+            args,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8_lossy(&output.stdout).trim().to_string()
+    }
+
+    fn configure_user(repo: &Path) {
+        git_ok(repo, &["config", "user.name", "GitDweep Test"]);
+        git_ok(repo, &["config", "user.email", "gitdweep@example.test"]);
+    }
+
+    fn commit_file(repo: &Path, name: &str, content: &str, message: &str) {
+        fs::write(repo.join(name), content).expect("write fixture file");
+        git_ok(repo, &["add", "--", name]);
+        git_ok(repo, &["commit", "-m", message]);
+    }
+
+    fn setup_repos() -> TestRepos {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock after epoch")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "gitdweep-pull-test-{}-{nonce}",
+            std::process::id()
+        ));
+        let remote = root.join("remote.git");
+        let seed = root.join("seed");
+        let local = root.join("local");
+        let peer = root.join("peer");
+        fs::create_dir_all(&root).expect("create fixture root");
+
+        git_ok(&root, &["init", "--bare", "--initial-branch=main", "remote.git"]);
+        git_ok(&root, &["init", "--initial-branch=main", "seed"]);
+        configure_user(&seed);
+        commit_file(&seed, "base.txt", "base\n", "base");
+        git_ok(
+            &seed,
+            &["remote", "add", "origin", remote.to_str().expect("utf-8 path")],
+        );
+        git_ok(&seed, &["push", "-u", "origin", "main"]);
+        git_ok(
+            &root,
+            &["clone", remote.to_str().expect("utf-8 path"), "local"],
+        );
+        git_ok(
+            &root,
+            &["clone", remote.to_str().expect("utf-8 path"), "peer"],
+        );
+        configure_user(&local);
+        configure_user(&peer);
+
+        TestRepos { root, local, peer }
+    }
+
+    #[test]
+    fn previews_and_executes_fast_forward() {
+        let repos = setup_repos();
+        commit_file(&repos.peer, "remote.txt", "remote\n", "remote change");
+        git_ok(&repos.peer, &["push"]);
+
+        let plan = preview_pull(repos.local.to_str().expect("utf-8 path")).unwrap();
+        assert_eq!(plan.action, "fast_forward");
+        assert_eq!((plan.ahead, plan.behind), (0, 1));
+
+        let outcome =
+            pull_with_strategy(repos.local.to_str().expect("utf-8 path"), true).unwrap();
+        assert!(outcome.success);
+        assert_eq!(outcome.status, "fast_forwarded");
+        assert_ne!(outcome.before_head, outcome.after_head.unwrap());
+    }
+
+    #[test]
+    fn merges_clean_divergence_and_creates_a_merge_commit() {
+        let repos = setup_repos();
+        commit_file(&repos.local, "local.txt", "local\n", "local change");
+        commit_file(&repos.peer, "remote.txt", "remote\n", "remote change");
+        git_ok(&repos.peer, &["push"]);
+
+        let plan = preview_pull(repos.local.to_str().expect("utf-8 path")).unwrap();
+        assert_eq!(plan.action, "merge");
+        assert_eq!((plan.ahead, plan.behind), (1, 1));
+
+        let outcome =
+            pull_with_strategy(repos.local.to_str().expect("utf-8 path"), true).unwrap();
+        assert!(outcome.success);
+        assert_eq!(outcome.status, "merged");
+        let parents = git_ok(&repos.local, &["rev-list", "--parents", "-n", "1", "HEAD"]);
+        assert_eq!(parents.split_whitespace().count(), 3);
+    }
+
+    #[test]
+    fn fast_forward_only_refuses_divergence_without_changing_head() {
+        let repos = setup_repos();
+        commit_file(&repos.local, "local.txt", "local\n", "local change");
+        commit_file(&repos.peer, "remote.txt", "remote\n", "remote change");
+        git_ok(&repos.peer, &["push"]);
+        let before = git_ok(&repos.local, &["rev-parse", "HEAD"]);
+
+        let outcome =
+            pull_with_strategy(repos.local.to_str().expect("utf-8 path"), false).unwrap();
+        assert!(!outcome.success);
+        assert_eq!(outcome.status, "needs_merge");
+        assert_eq!(git_ok(&repos.local, &["rev-parse", "HEAD"]), before);
+        assert!(run_git(&repos.local, &["rev-parse", "-q", "--verify", "MERGE_HEAD"]).is_err());
+    }
+
+    #[test]
+    fn preserves_conflicted_merge_for_resolution() {
+        let repos = setup_repos();
+        commit_file(&repos.local, "base.txt", "local\n", "local conflict");
+        commit_file(&repos.peer, "base.txt", "remote\n", "remote conflict");
+        git_ok(&repos.peer, &["push"]);
+
+        let outcome =
+            pull_with_strategy(repos.local.to_str().expect("utf-8 path"), true).unwrap();
+        assert!(!outcome.success);
+        assert_eq!(outcome.status, "conflict");
+        assert_eq!(outcome.conflict_files, vec!["base.txt"]);
+        assert!(run_git(&repos.local, &["rev-parse", "-q", "--verify", "MERGE_HEAD"]).is_ok());
+    }
 }

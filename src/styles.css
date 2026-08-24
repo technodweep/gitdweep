@@ -1580,6 +1580,62 @@ a:hover {
   background: color-mix(in srgb, var(--danger) 8%, var(--bg));
 }
 
+.pull-loading {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.85rem 0;
+  color: var(--text-muted);
+}
+
+.pull-route {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.75rem 0.9rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg);
+}
+
+.pull-route > div {
+  display: grid;
+  gap: 0.2rem;
+  min-width: 0;
+}
+
+.pull-route > div:last-child {
+  text-align: right;
+}
+
+.pull-route strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pull-route-arrow {
+  color: var(--accent);
+  font-size: 1.2rem;
+}
+
+.pull-preview-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.pull-actions {
+  justify-content: flex-end;
+}
+
+.pull-actions-spacer {
+  flex: 1;
+}
+
 .conflict-panel {
   display: grid;
   grid-template-columns: minmax(160px, 240px) 1fr;

@@ -205,13 +205,47 @@ pub struct SwitchProgress {
     pub message: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PullResult {
     pub repo_id: String,
     pub repo_name: String,
     pub path: String,
     pub success: bool,
+    pub message: String,
+    /// up_to_date | fast_forwarded | merged | conflict | merge_in_progress | needs_merge
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub branch: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub upstream: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ahead: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub behind: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub before_head: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub after_head: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub conflict_files: Vec<String>,
+}
+
+/// Fetch-backed preview shown before a single-repository pull.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PullPreview {
+    pub repo_id: String,
+    pub repo_name: String,
+    pub path: String,
+    pub branch: String,
+    pub upstream: String,
+    pub current_head: String,
+    pub ahead: i64,
+    pub behind: i64,
+    /// up_to_date | fast_forward | merge
+    pub action: String,
     pub message: String,
 }
 

@@ -412,6 +412,7 @@ fn run_batch_git_op(
                 path: repo.path.clone(),
                 success: true,
                 message: git::truncate_msg(&msg, 160),
+                ..PullResult::default()
             },
             Err(e) => PullResult {
                 repo_id: repo.id.clone(),
@@ -419,6 +420,7 @@ fn run_batch_git_op(
                 path: repo.path.clone(),
                 success: false,
                 message: e,
+                ..PullResult::default()
             },
         };
 
@@ -448,7 +450,14 @@ pub fn pull_all(
     state: State<'_, AppState>,
     project_id: String,
 ) -> Result<Vec<PullResult>, String> {
-    run_batch_git_op(&app, &state, &project_id, "pull-progress", "Pulling…", git::pull)
+    run_batch_git_op(
+        &app,
+        &state,
+        &project_id,
+        "pull-progress",
+        "Pulling (fast-forward only)…",
+        git::pull_ff_only,
+    )
 }
 
 /// Fetch --all --prune for every enabled repo.
@@ -551,15 +560,53 @@ pub fn preview_switch_environment(
 }
 
 #[tauri::command]
-pub fn pull_repo(state: State<'_, AppState>, repo_id: String) -> Result<PullResult, String> {
+pub fn preview_pull(
+    state: State<'_, AppState>,
+    repo_id: String,
+) -> Result<crate::models::PullPreview, String> {
     let repo = state.db.get_repo(&repo_id)?;
-    match git::pull(&repo.path) {
-        Ok(msg) => Ok(PullResult {
+    let plan = git::preview_pull(&repo.path)?;
+    Ok(crate::models::PullPreview {
+        repo_id: repo.id,
+        repo_name: repo.name,
+        path: repo.path,
+        branch: plan.branch,
+        upstream: plan.upstream,
+        current_head: plan.current_head,
+        ahead: plan.ahead,
+        behind: plan.behind,
+        action: plan.action,
+        message: plan.message,
+    })
+}
+
+#[tauri::command]
+pub fn pull_repo(
+    state: State<'_, AppState>,
+    repo_id: String,
+    strategy: Option<String>,
+) -> Result<PullResult, String> {
+    let repo = state.db.get_repo(&repo_id)?;
+    let allow_merge = match strategy.as_deref().unwrap_or("merge") {
+        "merge" => true,
+        "ff_only" => false,
+        other => return Err(format!("Unknown pull strategy: {other}")),
+    };
+    match git::pull_with_strategy(&repo.path, allow_merge) {
+        Ok(outcome) => Ok(PullResult {
             repo_id: repo.id,
             repo_name: repo.name,
             path: repo.path,
-            success: true,
-            message: git::truncate_msg(&msg, 160),
+            success: outcome.success,
+            message: outcome.message,
+            status: Some(outcome.status),
+            branch: Some(outcome.branch),
+            upstream: Some(outcome.upstream),
+            ahead: Some(outcome.ahead),
+            behind: Some(outcome.behind),
+            before_head: Some(outcome.before_head),
+            after_head: outcome.after_head,
+            conflict_files: outcome.conflict_files,
         }),
         Err(e) => Ok(PullResult {
             repo_id: repo.id,
@@ -567,6 +614,7 @@ pub fn pull_repo(state: State<'_, AppState>, repo_id: String) -> Result<PullResu
             path: repo.path,
             success: false,
             message: e,
+            ..PullResult::default()
         }),
     }
 }
@@ -581,6 +629,7 @@ pub fn push_repo(state: State<'_, AppState>, repo_id: String) -> Result<PullResu
             path: repo.path,
             success: true,
             message: git::truncate_msg(&msg, 160),
+            ..PullResult::default()
         }),
         Err(e) => Ok(PullResult {
             repo_id: repo.id,
@@ -588,6 +637,7 @@ pub fn push_repo(state: State<'_, AppState>, repo_id: String) -> Result<PullResu
             path: repo.path,
             success: false,
             message: e,
+            ..PullResult::default()
         }),
     }
 }
@@ -602,6 +652,7 @@ pub fn fetch_repo(state: State<'_, AppState>, repo_id: String) -> Result<PullRes
             path: repo.path,
             success: true,
             message: git::truncate_msg(&msg, 160),
+            ..PullResult::default()
         }),
         Err(e) => Ok(PullResult {
             repo_id: repo.id,
@@ -609,6 +660,7 @@ pub fn fetch_repo(state: State<'_, AppState>, repo_id: String) -> Result<PullRes
             path: repo.path,
             success: false,
             message: e,
+            ..PullResult::default()
         }),
     }
 }
