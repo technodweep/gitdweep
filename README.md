@@ -13,6 +13,7 @@
   <img alt="React 19" src="https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=black" />
   <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-5-3178C6?logo=typescript&logoColor=white" />
   <img alt="Rust" src="https://img.shields.io/badge/Rust-stable-000000?logo=rust&logoColor=white" />
+  <img alt="License: Apache-2.0" src="https://img.shields.io/badge/License-Apache_2.0-blue.svg" />
   <a href="https://github.com/sandeepkurien/git-gui/actions/workflows/build-linux.yml"><img alt="Build Linux packages" src="https://github.com/sandeepkurien/git-gui/actions/workflows/build-linux.yml/badge.svg" /></a>
 </p>
 
@@ -163,6 +164,10 @@ GitDweep stores application state in SQLite under the operating system's app-dat
 - Pull request provider integrations
 - Git submodule and worktree support
 - Additional platform packaging and automated releases
+
+## License
+
+GitDweep is licensed under the [Apache License 2.0](./LICENSE).
 
 ## Contributing
 

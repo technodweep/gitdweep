@@ -2,7 +2,8 @@
 name = "git-workspace"
 version = "0.1.0"
 description = "Git Workspace — multi-repo project environments"
-authors = ["you"]
+authors = ["Sandeep Kurien"]
+license = "Apache-2.0"
 edition = "2021"
 
 [lib]
