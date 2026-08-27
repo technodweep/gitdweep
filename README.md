@@ -14,7 +14,7 @@
   <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-5-3178C6?logo=typescript&logoColor=white" />
   <img alt="Rust" src="https://img.shields.io/badge/Rust-stable-000000?logo=rust&logoColor=white" />
   <img alt="License: Apache-2.0" src="https://img.shields.io/badge/License-Apache_2.0-blue.svg" />
-  <a href="https://github.com/sandeepkurien/git-gui/actions/workflows/build-linux.yml"><img alt="Build Linux packages" src="https://github.com/sandeepkurien/git-gui/actions/workflows/build-linux.yml/badge.svg" /></a>
+  <a href="https://github.com/technodweep/gitdweep/actions/workflows/build-linux.yml"><img alt="Build Linux packages" src="https://github.com/technodweep/gitdweep/actions/workflows/build-linux.yml/badge.svg" /></a>
 </p>
 
 GitDweep is a desktop Git GUI for developers who work across many repositories. Group repositories into projects, map branches to environments such as development, staging, and production, then switch an entire workspace with a dry-run preview and optional stash and fetch controls.
@@ -78,7 +78,7 @@ _Preview branch targets and repository status before switching a complete projec
 Clone the repository and install the dependencies:
 
 ```bash
-git clone https://github.com/sandeepkurien/git-gui.git
+git clone https://github.com/technodweep/gitdweep.git
 cd git-gui
 npm install
 ```
