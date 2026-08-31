@@ -2,6 +2,11 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
 import "./styles.css";
+import "./rendering-stability.css";
+
+if (navigator.userAgent.includes("Windows")) {
+  document.documentElement.classList.add("platform-windows");
+}
 
 const rootEl = document.getElementById("root");
 

@@ -19,9 +19,7 @@ function NavigationLink({
       to={to}
       end={end}
       title={label}
-      className={({ isActive }) =>
-        isActive ? "nav-link active" : "nav-link"
-      }
+      className={({ isActive }) => (isActive ? "nav-link active" : "nav-link")}
     >
       <Icon name={icon} />
       <span>{label}</span>
@@ -33,16 +31,19 @@ function NavigationLink({
 export function Layout() {
   const { projectId } = useParams();
   const [projectName, setProjectName] = useState<string | null>(() =>
-    projectId ? peekWorkspace(projectId)?.detail.project.name ?? null : null,
+    projectId ? (peekWorkspace(projectId)?.detail.project.name ?? null) : null,
   );
-  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(() =>
-    localStorage.getItem("git-workspace.sidebar-collapsed") === "true",
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(
+    () => localStorage.getItem("git-workspace.sidebar-collapsed") === "true",
   );
 
   const toggleSidebar = () => {
     setIsSidebarCollapsed((isCollapsed) => {
       const nextValue = !isCollapsed;
-      localStorage.setItem("git-workspace.sidebar-collapsed", String(nextValue));
+      localStorage.setItem(
+        "git-workspace.sidebar-collapsed",
+        String(nextValue),
+      );
       return nextValue;
     });
   };
@@ -68,7 +69,9 @@ export function Layout() {
 
   return (
     <div
-      className={isSidebarCollapsed ? "app-shell sidebar-collapsed" : "app-shell"}
+      className={
+        isSidebarCollapsed ? "app-shell sidebar-collapsed" : "app-shell"
+      }
     >
       <aside id="app-sidebar" className="sidebar">
         <div className="sidebar-header">
@@ -87,14 +90,18 @@ export function Layout() {
               rel="noreferrer"
             >
               <span>A Technodweep product</span>
-              <strong>technodweep.com <span aria-hidden="true">↗</span></strong>
+              <strong>
+                technodweep.com <span aria-hidden="true">↗</span>
+              </strong>
             </a>
           </div>
           <button
             className="sidebar-toggle"
             type="button"
             onClick={toggleSidebar}
-            aria-label={isSidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+            aria-label={
+              isSidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"
+            }
             aria-controls="app-sidebar"
             aria-expanded={!isSidebarCollapsed}
             title={isSidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
@@ -112,7 +119,10 @@ export function Layout() {
 
           {projectId && (
             <>
-              <div className="workspace-context" title={projectName ?? undefined}>
+              <div
+                className="workspace-context"
+                title={projectName ?? undefined}
+              >
                 <span className="workspace-context-icon">
                   <Icon name="folder" size={16} />
                 </span>

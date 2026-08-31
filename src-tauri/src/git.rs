@@ -2,8 +2,27 @@ use crate::models::RepoStatus;
 use std::path::Path;
 use std::process::Command;
 
+/// Build every Git child process with the platform-specific window behavior
+/// expected by a desktop GUI application.
+fn git_command() -> Command {
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+
+        // A GUI-subsystem parent has no console for git.exe to inherit. Without
+        // this flag Windows briefly creates a console window for every Git call.
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        let mut command = Command::new("git");
+        command.creation_flags(CREATE_NO_WINDOW);
+        command
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    Command::new("git")
+}
+
 fn run_git(repo: &Path, args: &[&str]) -> Result<String, String> {
-    let output = Command::new("git")
+    let output = git_command()
         .args(args)
         .current_dir(repo)
         .output()
@@ -26,7 +45,7 @@ fn run_git(repo: &Path, args: &[&str]) -> Result<String, String> {
 
 /// Like run_git but includes stderr on success (for pull/fetch/push messages).
 fn run_git_with_stderr(repo: &Path, args: &[&str]) -> Result<String, String> {
-    let output = Command::new("git")
+    let output = git_command()
         .args(args)
         .current_dir(repo)
         .output()
@@ -1576,7 +1595,6 @@ mod pull_tests {
     use super::*;
     use std::fs;
     use std::path::{Path, PathBuf};
-    use std::process::Command;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     struct TestRepos {
@@ -1592,7 +1610,7 @@ mod pull_tests {
     }
 
     fn git_ok(cwd: &Path, args: &[&str]) -> String {
-        let output = Command::new("git")
+        let output = git_command()
             .args(args)
             .current_dir(cwd)
             .output()

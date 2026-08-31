@@ -22,14 +22,23 @@ export function EnvironmentEditor() {
   const { projectId = "" } = useParams();
   const initialWorkspace = peekWorkspace(projectId);
   const initialEnvironmentId =
-    initialWorkspace?.environments.find((environment) => environment.isDefault)?.id ??
+    initialWorkspace?.environments.find((environment) => environment.isDefault)
+      ?.id ??
     initialWorkspace?.environments[0]?.id ??
     null;
   const initialBranchMap = peekEnvironmentBranchMap(initialEnvironmentId);
-  const [detail, setDetail] = useState<ProjectDetail | null>(initialWorkspace?.detail ?? null);
-  const [envs, setEnvs] = useState<Environment[]>(initialWorkspace?.environments ?? []);
-  const [activeEnvId, setActiveEnvId] = useState<string | null>(initialEnvironmentId);
-  const [branchMap, setBranchMap] = useState<Record<string, string>>(initialBranchMap ?? {});
+  const [detail, setDetail] = useState<ProjectDetail | null>(
+    initialWorkspace?.detail ?? null,
+  );
+  const [envs, setEnvs] = useState<Environment[]>(
+    initialWorkspace?.environments ?? [],
+  );
+  const [activeEnvId, setActiveEnvId] = useState<string | null>(
+    initialEnvironmentId,
+  );
+  const [branchMap, setBranchMap] = useState<Record<string, string>>(
+    initialBranchMap ?? {},
+  );
   const [repoBranches, setRepoBranches] = useState<
     Record<string, BranchInfo[]>
   >(initialWorkspace?.branches ?? {});
@@ -42,24 +51,27 @@ export function EnvironmentEditor() {
     null,
   );
 
-  const refresh = useCallback(async (force = true) => {
-    try {
-      const workspace = await loadWorkspace(projectId, force);
-      const d = workspace.detail;
-      const e = workspace.environments;
-      setDetail(d);
-      setEnvs(e);
-      setRepoBranches(workspace.branches);
-      setActiveEnvId((prev) => {
-        if (prev && e.some((x) => x.id === prev)) return prev;
-        return e.find((x) => x.isDefault)?.id ?? e[0]?.id ?? null;
-      });
-    } catch (err) {
-      setToast({ msg: String(err), error: true });
-    } finally {
-      setLoading(false);
-    }
-  }, [projectId]);
+  const refresh = useCallback(
+    async (force = true) => {
+      try {
+        const workspace = await loadWorkspace(projectId, force);
+        const d = workspace.detail;
+        const e = workspace.environments;
+        setDetail(d);
+        setEnvs(e);
+        setRepoBranches(workspace.branches);
+        setActiveEnvId((prev) => {
+          if (prev && e.some((x) => x.id === prev)) return prev;
+          return e.find((x) => x.isDefault)?.id ?? e[0]?.id ?? null;
+        });
+      } catch (err) {
+        setToast({ msg: String(err), error: true });
+      } finally {
+        setLoading(false);
+      }
+    },
+    [projectId],
+  );
 
   useEffect(() => {
     void refresh(false);
@@ -240,10 +252,7 @@ export function EnvironmentEditor() {
                       Make default
                     </button>
                   )}
-                  <button
-                    className="btn"
-                    onClick={() => void setAllTo("main")}
-                  >
+                  <button className="btn" onClick={() => void setAllTo("main")}>
                     Set all to main
                   </button>
                   <button

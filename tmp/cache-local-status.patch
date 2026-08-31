@@ -1,0 +1,125 @@
+diff --git a/src/lib/workspaceCache.ts b/src/lib/workspaceCache.ts
+--- a/src/lib/workspaceCache.ts
++++ b/src/lib/workspaceCache.ts
+@@ -88,6 +88,35 @@ export function peekWorkspace(projectId: string): WorkspaceSnapshot | null {
+   return workspaceEntries.get(projectId)?.snapshot ?? null;
+ }
+ 
++export function cacheWorkspaceRepoStatus(
++  projectId: string,
++  status: RepoStatus,
++): void {
++  const entry = workspaceEntries.get(projectId);
++  if (!entry?.snapshot) return;
++  entry.snapshot = {
++    ...entry.snapshot,
++    statuses: {
++      ...entry.snapshot.statuses,
++      [status.repoId]: status,
++    },
++  };
++  invalidateProjectPreviews(projectId);
++}
++
++export function cacheWorkspaceRepoBranches(
++  projectId: string,
++  repoId: string,
++  branches: BranchInfo[],
++): void {
++  const entry = workspaceEntries.get(projectId);
++  if (!entry?.snapshot) return;
++  entry.snapshot = {
++    ...entry.snapshot,
++    branches: {
++      ...entry.snapshot.branches,
++      [repoId]: branches,
++    },
++  };
++}
++
+ export async function loadEnvironmentBranchMap(
+   environmentId: string,
+   force = false,
+diff --git a/src/routes/ProjectDetail.tsx b/src/routes/ProjectDetail.tsx
+--- a/src/routes/ProjectDetail.tsx
++++ b/src/routes/ProjectDetail.tsx
+@@ -57,7 +57,12 @@ import {
+ } from "../components/ContextMenu";
+ import { Icon } from "../components/Icon";
+ import { PageLoading } from "../components/PageLoading";
+-import { loadWorkspace, peekWorkspace } from "../lib/workspaceCache";
++import {
++  cacheWorkspaceRepoBranches,
++  cacheWorkspaceRepoStatus,
++  loadWorkspace,
++  peekWorkspace,
++} from "../lib/workspaceCache";
+ 
+ type BatchKind = "pull" | "fetch" | "push";
+ type PullStrategy = "merge" | "ff_only";
+@@ -286,9 +291,11 @@ export function ProjectDetail() {
+     try {
+       const st = await checkoutBranch(repoId, branch, false);
+       setStatuses((prev) => ({ ...prev, [repoId]: st }));
++      cacheWorkspaceRepoStatus(projectId, st);
+       try {
+         const list = await listBranches(repoId);
+         setBranches((prev) => ({ ...prev, [repoId]: list }));
++        cacheWorkspaceRepoBranches(projectId, repoId, list);
+       } catch {
+         /* keep previous branch list */
+       }
+@@ -1369,6 +1376,7 @@ export function ProjectDetail() {
+ 
+   function applyRepoStatus(st: RepoStatus) {
+     setStatuses((prev) => ({ ...prev, [st.repoId]: st }));
++    cacheWorkspaceRepoStatus(projectId, st);
+   }
+ 
+   async function openRebase(repoId: string, name: string, preselect?: string) {
+diff --git a/src/routes/EnvironmentSwitcher.tsx b/src/routes/EnvironmentSwitcher.tsx
+--- a/src/routes/EnvironmentSwitcher.tsx
++++ b/src/routes/EnvironmentSwitcher.tsx
+@@ -75,9 +75,6 @@ export function EnvironmentSwitcher() {
+   const [running, setRunning] = useState(false);
+   const [initialLoading, setInitialLoading] = useState(!initialWorkspace);
+   const [previewLoading, setPreviewLoading] = useState(false);
+-  const [previewEnvId, setPreviewEnvId] = useState<string | null>(
+-    initialPreview ? initialEnvironmentId : null,
+-  );
+   const [stashIfDirty, setStashIfDirty] = useState(false);
+   const [fetchFirst, setFetchFirst] = useState(false);
+   const [popStashAfter, setPopStashAfter] = useState(false);
+@@ -139,7 +136,6 @@ export function EnvironmentSwitcher() {
+   useLayoutEffect(() => {
+     if (!envId) {
+       setPreview({});
+-      setPreviewEnvId(null);
+       setPreviewLoading(false);
+       return;
+     }
+@@ -148,7 +144,6 @@ export function EnvironmentSwitcher() {
+     const cached = peekSwitchPreview(projectId, envId, options);
+     if (cached) {
+       setPreview(cached);
+-      setPreviewEnvId(envId);
+       setPreviewLoading(false);
+       return;
+     }
+@@ -165,7 +160,6 @@ export function EnvironmentSwitcher() {
+       } finally {
+         if (!cancelled) {
+-          setPreviewEnvId(envId);
+           setPreviewLoading(false);
+         }
+       }
+@@ -227,8 +221,7 @@ export function EnvironmentSwitcher() {
+   }
+ 
+   const enabledRepos = detail?.repos.filter((r) => r.enabled) ?? [];
+-  const contentLoading =
+-    initialLoading || (envId !== null && previewEnvId !== envId);
++  const contentLoading = initialLoading;
+ 
+   return (
+     <>

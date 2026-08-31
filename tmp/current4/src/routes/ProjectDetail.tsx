@@ -57,12 +57,7 @@ import {
 } from "../components/ContextMenu";
 import { Icon } from "../components/Icon";
 import { PageLoading } from "../components/PageLoading";
-import {
-  cacheWorkspaceRepoBranches,
-  cacheWorkspaceRepoStatus,
-  loadWorkspace,
-  peekWorkspace,
-} from "../lib/workspaceCache";
+import { loadWorkspace, peekWorkspace } from "../lib/workspaceCache";
 
 type BatchKind = "pull" | "fetch" | "push";
 type PullStrategy = "merge" | "ff_only";
@@ -82,9 +77,15 @@ export function ProjectDetail() {
   const { projectId = "" } = useParams();
   const { open: openCtx, menuNode: ctxMenu } = useContextMenu();
   const initialWorkspace = peekWorkspace(projectId);
-  const [detail, setDetail] = useState<ProjectDetailType | null>(initialWorkspace?.detail ?? null);
-  const [statuses, setStatuses] = useState<Record<string, RepoStatus>>(initialWorkspace?.statuses ?? {});
-  const [branches, setBranches] = useState<Record<string, BranchInfo[]>>(initialWorkspace?.branches ?? {});
+  const [detail, setDetail] = useState<ProjectDetailType | null>(
+    initialWorkspace?.detail ?? null,
+  );
+  const [statuses, setStatuses] = useState<Record<string, RepoStatus>>(
+    initialWorkspace?.statuses ?? {},
+  );
+  const [branches, setBranches] = useState<Record<string, BranchInfo[]>>(
+    initialWorkspace?.branches ?? {},
+  );
   const [branchesReady, setBranchesReady] = useState(Boolean(initialWorkspace));
   const [loading, setLoading] = useState(!initialWorkspace);
   const [batchBusy, setBatchBusy] = useState<BatchKind | null>(null);
@@ -231,31 +232,34 @@ export function ProjectDetail() {
     }
   }, []);
 
-  const refresh = useCallback(async (force = true) => {
-    if (!peekWorkspace(projectId)) {
-      setLoading(true);
-      setBranchesReady(false);
-    }
-    try {
-      const workspace = await loadWorkspace(projectId, force);
-      const d = workspace.detail;
+  const refresh = useCallback(
+    async (force = true) => {
+      if (!peekWorkspace(projectId)) {
+        setLoading(true);
+        setBranchesReady(false);
+      }
+      try {
+        const workspace = await loadWorkspace(projectId, force);
+        const d = workspace.detail;
 
-      // Keep active tab valid when repos change
-      setActiveTabId((prev) => {
-        if (prev && d.repos.some((r) => r.id === prev)) return prev;
-        return d.repos[0]?.id ?? null;
-      });
+        // Keep active tab valid when repos change
+        setActiveTabId((prev) => {
+          if (prev && d.repos.some((r) => r.id === prev)) return prev;
+          return d.repos[0]?.id ?? null;
+        });
 
-      setDetail(d);
-      setStatuses(workspace.statuses);
-      setBranches(workspace.branches);
-      setBranchesReady(true);
-    } catch (e) {
-      setToast({ msg: String(e), error: true });
-    } finally {
-      setLoading(false);
-    }
-  }, [projectId]);
+        setDetail(d);
+        setStatuses(workspace.statuses);
+        setBranches(workspace.branches);
+        setBranchesReady(true);
+      } catch (e) {
+        setToast({ msg: String(e), error: true });
+      } finally {
+        setLoading(false);
+      }
+    },
+    [projectId],
+  );
 
   useEffect(() => {
     void refresh(false);
@@ -291,11 +295,9 @@ export function ProjectDetail() {
     try {
       const st = await checkoutBranch(repoId, branch, false);
       setStatuses((prev) => ({ ...prev, [repoId]: st }));
-      cacheWorkspaceRepoStatus(projectId, st);
       try {
         const list = await listBranches(repoId);
         setBranches((prev) => ({ ...prev, [repoId]: list }));
-        cacheWorkspaceRepoBranches(projectId, repoId, list);
       } catch {
         /* keep previous branch list */
       }
@@ -357,7 +359,9 @@ export function ProjectDetail() {
         }
       }
       await refresh();
-      setToast({ msg: added ? `Added ${added} repo(s)` : "No new repos found" });
+      setToast({
+        msg: added ? `Added ${added} repo(s)` : "No new repos found",
+      });
     } catch (e) {
       setToast({ msg: String(e), error: true });
     }
@@ -1124,10 +1128,7 @@ export function ProjectDetail() {
         label: "Create branch here…",
         disabled: historyBusy,
         onSelect: () => {
-          const name = window.prompt(
-            `New branch name at ${c.shortHash}:`,
-            "",
-          );
+          const name = window.prompt(`New branch name at ${c.shortHash}:`, "");
           if (!name?.trim()) return;
           void (async () => {
             try {
@@ -1205,7 +1206,8 @@ export function ProjectDetail() {
 
   async function refreshRepoFiles(repoId: string) {
     if (focusedRepoId === repoId) void loadInspectorFiles(repoId);
-    if (viewMode === "tabs" && activeTabId === repoId) void loadTabDetail(repoId);
+    if (viewMode === "tabs" && activeTabId === repoId)
+      void loadTabDetail(repoId);
     if (commitRepoId === repoId) void refreshChangedFiles(repoId);
   }
 
@@ -1356,7 +1358,11 @@ export function ProjectDetail() {
   }
 
   async function onAbortMerge(repoId: string) {
-    if (!confirm("Abort the in-progress merge? Conflict resolutions will be lost.")) {
+    if (
+      !confirm(
+        "Abort the in-progress merge? Conflict resolutions will be lost.",
+      )
+    ) {
       return false;
     }
     try {
@@ -1377,7 +1383,6 @@ export function ProjectDetail() {
 
   function applyRepoStatus(st: RepoStatus) {
     setStatuses((prev) => ({ ...prev, [st.repoId]: st }));
-    cacheWorkspaceRepoStatus(projectId, st);
   }
 
   async function openRebase(repoId: string, name: string, preselect?: string) {
@@ -1510,9 +1515,7 @@ export function ProjectDetail() {
   const focusedRepo =
     detail.repos.find((r) => r.id === focusedRepoId) ?? activeRepo;
   const focusedSt = focusedRepo ? statuses[focusedRepo.id] : undefined;
-  const focusedBranches = focusedRepo
-    ? (branches[focusedRepo.id] ?? [])
-    : [];
+  const focusedBranches = focusedRepo ? (branches[focusedRepo.id] ?? []) : [];
 
   return (
     <>
@@ -1523,841 +1526,911 @@ export function ProjectDetail() {
         }`}
       >
         <div className="project-workspace-main">
-      <div className="page-header">
-        <div>
-          <div className="eyebrow">Project workspace</div>
-          <h1>{detail.project.name}</h1>
-          <p className="mono">{detail.project.rootPath ?? "No root path"}</p>
-        </div>
-        <div className="actions">
-          <button
-            type="button"
-            className="btn"
-            onClick={toggleInspector}
-            title={
-              inspectorCollapsed
-                ? "Show worktree & branches panel"
-                : "Hide worktree & branches panel"
-            }
-          >
-            {inspectorCollapsed ? "Show inspector" : "Hide inspector"}
-          </button>
-          <div className="view-mode-toggle" role="group" aria-label="Repo view">
-            <button
-              type="button"
-              className={`view-mode-btn${viewMode === "list" ? " active" : ""}`}
-              onClick={() => changeViewMode("list")}
-            >
-              List
-            </button>
-            <button
-              type="button"
-              className={`view-mode-btn${viewMode === "tabs" ? " active" : ""}`}
-              onClick={() => changeViewMode("tabs")}
-            >
-              Tabs
-            </button>
-          </div>
-          <Link className="btn" to={`/projects/${projectId}/environments`}>
-            Environments
-          </Link>
-          <Link className="btn btn-primary" to={`/projects/${projectId}/switch`}>
-            <Icon name="switch" size={16} />
-            Switch environment
-          </Link>
-          <button
-            className="btn"
-            disabled={busy}
-            onClick={() =>
-              void runBatch(
-                "fetch",
-                "Fetch for {n} enabled repo(s)?",
-                fetchAllRepos,
-              )
-            }
-          >
-            {batchBusy === "fetch" ? "Fetching…" : "Fetch all"}
-          </button>
-          <button
-            className="btn"
-            disabled={busy}
-            onClick={() =>
-              void runBatch(
-                "pull",
-                "Pull (ff-only) for {n} enabled repo(s)?",
-                pullAll,
-              )
-            }
-          >
-            {batchBusy === "pull" ? "Pulling…" : "Pull all"}
-          </button>
-          <button
-            className="btn"
-            disabled={busy}
-            onClick={() =>
-              void runBatch("push", "Push for {n} enabled repo(s)?", pushAll)
-            }
-          >
-            {batchBusy === "push" ? "Pushing…" : "Push all"}
-          </button>
-          <button className="btn" onClick={() => void onRescan()} disabled={busy}>
-            Rescan
-          </button>
-          <button className="btn" onClick={() => void onAddRepo()} disabled={busy}>
-            <Icon name="plus" size={16} />
-            Add repo
-          </button>
-          <button className="btn" onClick={() => void refresh()} disabled={busy}>
-            Refresh
-          </button>
-        </div>
-      </div>
-
-      {batchResults && batchResults.items.length > 0 && (
-        <div className="card" style={{ marginBottom: "1rem" }}>
-          <strong>
-            {batchResults.kind === "pull"
-              ? "Pull"
-              : batchResults.kind === "push"
-                ? "Push"
-                : "Fetch"}{" "}
-            results
-          </strong>
-          <ul className="result-list">
-            {batchResults.items.map((r) => (
-              <li key={r.repoId}>
-                <span className={`badge ${r.success ? "ok" : "err"}`}>
-                  {r.repoName}
-                </span>{" "}
-                <span className="muted mono" title={r.message}>
-                  {r.message}
-                </span>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-
-      {detail.repos.length === 0 ? (
-        <div className="card empty">
-          <p>No repositories in this project.</p>
-          <button className="btn btn-primary" onClick={() => void onAddRepo()}>
-            Add a repo
-          </button>
-        </div>
-      ) : viewMode === "list" ? (
-        <div className="repo-list">
-          <div className="repo-list-meta muted">
-            {detail.repos.length} repo{detail.repos.length === 1 ? "" : "s"} ·
-            list view
-          </div>
-          {detail.repos.map((repo) => {
-            const st = statuses[repo.id];
-            const repoBranches = branches[repo.id] ?? [];
-            const thisBusy = rowBusy === repo.id;
-            const pulls = localPullCount(repoBranches);
-            const focused = focusedRepoId === repo.id;
-            return (
-              <article
-                key={repo.id}
-                className={`repo-card${repo.enabled ? "" : " disabled"}${
-                  focused ? " focused" : ""
-                }`}
-                onClick={() => setFocusedRepoId(repo.id)}
-                onContextMenu={(e) => openCtx(e, repoContextItems(repo))}
+          <div className="page-header">
+            <div>
+              <div className="eyebrow">Project workspace</div>
+              <h1>{detail.project.name}</h1>
+              <p className="mono">
+                {detail.project.rootPath ?? "No root path"}
+              </p>
+            </div>
+            <div className="actions">
+              <button
+                type="button"
+                className="btn"
+                onClick={toggleInspector}
+                title={
+                  inspectorCollapsed
+                    ? "Show worktree & branches panel"
+                    : "Hide worktree & branches panel"
+                }
               >
-                <div className="repo-card-main">
-                  <label
-                    className="repo-enable"
-                    title="Include in batch ops"
-                    onClick={(e) => e.stopPropagation()}
-                  >
-                    <input
-                      type="checkbox"
-                      checked={repo.enabled}
-                      onChange={(e) =>
-                        void onToggle(repo.id, e.target.checked)
-                      }
-                    />
-                  </label>
+                {inspectorCollapsed ? "Show inspector" : "Hide inspector"}
+              </button>
+              <div
+                className="view-mode-toggle"
+                role="group"
+                aria-label="Repo view"
+              >
+                <button
+                  type="button"
+                  className={`view-mode-btn${viewMode === "list" ? " active" : ""}`}
+                  onClick={() => changeViewMode("list")}
+                >
+                  List
+                </button>
+                <button
+                  type="button"
+                  className={`view-mode-btn${viewMode === "tabs" ? " active" : ""}`}
+                  onClick={() => changeViewMode("tabs")}
+                >
+                  Tabs
+                </button>
+              </div>
+              <Link className="btn" to={`/projects/${projectId}/environments`}>
+                Environments
+              </Link>
+              <Link
+                className="btn btn-primary"
+                to={`/projects/${projectId}/switch`}
+              >
+                <Icon name="switch" size={16} />
+                Switch environment
+              </Link>
+              <button
+                className="btn"
+                disabled={busy}
+                onClick={() =>
+                  void runBatch(
+                    "fetch",
+                    "Fetch for {n} enabled repo(s)?",
+                    fetchAllRepos,
+                  )
+                }
+              >
+                {batchBusy === "fetch" ? "Fetching…" : "Fetch all"}
+              </button>
+              <button
+                className="btn"
+                disabled={busy}
+                onClick={() =>
+                  void runBatch(
+                    "pull",
+                    "Pull (ff-only) for {n} enabled repo(s)?",
+                    pullAll,
+                  )
+                }
+              >
+                {batchBusy === "pull" ? "Pulling…" : "Pull all"}
+              </button>
+              <button
+                className="btn"
+                disabled={busy}
+                onClick={() =>
+                  void runBatch(
+                    "push",
+                    "Push for {n} enabled repo(s)?",
+                    pushAll,
+                  )
+                }
+              >
+                {batchBusy === "push" ? "Pushing…" : "Push all"}
+              </button>
+              <button
+                className="btn"
+                onClick={() => void onRescan()}
+                disabled={busy}
+              >
+                Rescan
+              </button>
+              <button
+                className="btn"
+                onClick={() => void onAddRepo()}
+                disabled={busy}
+              >
+                <Icon name="plus" size={16} />
+                Add repo
+              </button>
+              <button
+                className="btn"
+                onClick={() => void refresh()}
+                disabled={busy}
+              >
+                Refresh
+              </button>
+            </div>
+          </div>
 
-                  <div className="repo-card-identity">
-                    <div className="repo-card-title-row">
-                      <h3 className="repo-card-name">{repo.name}</h3>
-                      {focused ? (
-                        <span className="badge" title="Shown in inspector">
-                          inspecting
-                        </span>
-                      ) : null}
-                      {pulls > 0 ? (
-                        <span
-                          className="badge warn"
-                          title={`${pulls} local branch(es) behind upstream — open inspector`}
-                        >
-                          ↓{pulls} branch{pulls === 1 ? "" : "es"}
-                        </span>
-                      ) : null}
-                      {st?.isMerging ? (
-                        <span className="badge warn">merging</span>
-                      ) : null}
-                      {st?.isRebasing ? (
-                        <span className="badge warn">rebasing</span>
-                      ) : null}
-                      {st?.error ? (
-                        <span className="badge err">{st.error}</span>
-                      ) : st?.isDirty ? (
-                        <span className="badge warn">
-                          <span className="status-dot dirty" /> dirty
-                        </span>
-                      ) : (
-                        <span className="badge ok">
-                          <span className="status-dot clean" /> clean
-                        </span>
-                      )}
-                      {st?.ahead != null || st?.behind != null ? (
-                        <span
-                          className={
-                            (st.ahead ?? 0) > 0 || (st.behind ?? 0) > 0
-                              ? "sync-drift mono"
-                              : "muted mono"
-                          }
-                          title="Ahead / behind upstream"
-                        >
-                          ↑{st.ahead ?? 0} ↓{st.behind ?? 0}
-                        </span>
-                      ) : null}
-                    </div>
-                    {st?.isMerging && (st.conflictFiles?.length ?? 0) > 0 ? (
-                      <div className="merge-banner">
-                        Conflicts in {st.conflictFiles!.length} file(s). Open
-                        Merge to resolve file-by-file, or abort.
-                      </div>
-                    ) : null}
-                    {st?.isRebasing ? (
-                      <div className="merge-banner">
-                        Rebase in progress
-                        {(st.conflictFiles?.length ?? 0) > 0
-                          ? ` · ${st.conflictFiles!.length} conflict(s)`
-                          : ""}
-                        . Open Rebase to continue, skip, or abort.
-                      </div>
-                    ) : null}
-                    <div className="muted mono repo-card-path" title={repo.path}>
-                      {repo.path}
-                    </div>
-                    {st?.lastCommit ? (
-                      <div
-                        className="repo-card-commit muted"
-                        title={st.lastCommit}
+          {batchResults && batchResults.items.length > 0 && (
+            <div className="card" style={{ marginBottom: "1rem" }}>
+              <strong>
+                {batchResults.kind === "pull"
+                  ? "Pull"
+                  : batchResults.kind === "push"
+                    ? "Push"
+                    : "Fetch"}{" "}
+                results
+              </strong>
+              <ul className="result-list">
+                {batchResults.items.map((r) => (
+                  <li key={r.repoId}>
+                    <span className={`badge ${r.success ? "ok" : "err"}`}>
+                      {r.repoName}
+                    </span>{" "}
+                    <span className="muted mono" title={r.message}>
+                      {r.message}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {detail.repos.length === 0 ? (
+            <div className="card empty">
+              <p>No repositories in this project.</p>
+              <button
+                className="btn btn-primary"
+                onClick={() => void onAddRepo()}
+              >
+                Add a repo
+              </button>
+            </div>
+          ) : viewMode === "list" ? (
+            <div className="repo-list">
+              <div className="repo-list-meta muted">
+                {detail.repos.length} repo{detail.repos.length === 1 ? "" : "s"}{" "}
+                · list view
+              </div>
+              {detail.repos.map((repo) => {
+                const st = statuses[repo.id];
+                const repoBranches = branches[repo.id] ?? [];
+                const thisBusy = rowBusy === repo.id;
+                const pulls = localPullCount(repoBranches);
+                const focused = focusedRepoId === repo.id;
+                return (
+                  <article
+                    key={repo.id}
+                    className={`repo-card${repo.enabled ? "" : " disabled"}${
+                      focused ? " focused" : ""
+                    }`}
+                    onClick={() => setFocusedRepoId(repo.id)}
+                    onContextMenu={(e) => openCtx(e, repoContextItems(repo))}
+                  >
+                    <div className="repo-card-main">
+                      <label
+                        className="repo-enable"
+                        title="Include in batch ops"
+                        onClick={(e) => e.stopPropagation()}
                       >
-                        <span className="commit-subject">{st.lastCommit}</span>
-                        {st.lastCommitAt ? (
-                          <span> · {st.lastCommitAt}</span>
+                        <input
+                          type="checkbox"
+                          checked={repo.enabled}
+                          onChange={(e) =>
+                            void onToggle(repo.id, e.target.checked)
+                          }
+                        />
+                      </label>
+
+                      <div className="repo-card-identity">
+                        <div className="repo-card-title-row">
+                          <h3 className="repo-card-name">{repo.name}</h3>
+                          {focused ? (
+                            <span className="badge" title="Shown in inspector">
+                              inspecting
+                            </span>
+                          ) : null}
+                          {pulls > 0 ? (
+                            <span
+                              className="badge warn"
+                              title={`${pulls} local branch(es) behind upstream — open inspector`}
+                            >
+                              ↓{pulls} branch{pulls === 1 ? "" : "es"}
+                            </span>
+                          ) : null}
+                          {st?.isMerging ? (
+                            <span className="badge warn">merging</span>
+                          ) : null}
+                          {st?.isRebasing ? (
+                            <span className="badge warn">rebasing</span>
+                          ) : null}
+                          {st?.error ? (
+                            <span className="badge err">{st.error}</span>
+                          ) : st?.isDirty ? (
+                            <span className="badge warn">
+                              <span className="status-dot dirty" /> dirty
+                            </span>
+                          ) : (
+                            <span className="badge ok">
+                              <span className="status-dot clean" /> clean
+                            </span>
+                          )}
+                          {st?.ahead != null || st?.behind != null ? (
+                            <span
+                              className={
+                                (st.ahead ?? 0) > 0 || (st.behind ?? 0) > 0
+                                  ? "sync-drift mono"
+                                  : "muted mono"
+                              }
+                              title="Ahead / behind upstream"
+                            >
+                              ↑{st.ahead ?? 0} ↓{st.behind ?? 0}
+                            </span>
+                          ) : null}
+                        </div>
+                        {st?.isMerging &&
+                        (st.conflictFiles?.length ?? 0) > 0 ? (
+                          <div className="merge-banner">
+                            Conflicts in {st.conflictFiles!.length} file(s).
+                            Open Merge to resolve file-by-file, or abort.
+                          </div>
+                        ) : null}
+                        {st?.isRebasing ? (
+                          <div className="merge-banner">
+                            Rebase in progress
+                            {(st.conflictFiles?.length ?? 0) > 0
+                              ? ` · ${st.conflictFiles!.length} conflict(s)`
+                              : ""}
+                            . Open Rebase to continue, skip, or abort.
+                          </div>
+                        ) : null}
+                        <div
+                          className="muted mono repo-card-path"
+                          title={repo.path}
+                        >
+                          {repo.path}
+                        </div>
+                        {st?.lastCommit ? (
+                          <div
+                            className="repo-card-commit muted"
+                            title={st.lastCommit}
+                          >
+                            <span className="commit-subject">
+                              {st.lastCommit}
+                            </span>
+                            {st.lastCommitAt ? (
+                              <span> · {st.lastCommitAt}</span>
+                            ) : null}
+                          </div>
                         ) : null}
                       </div>
-                    ) : null}
+
+                      <div
+                        className="repo-card-branch"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <label className="repo-branch-label muted">
+                          Branch
+                        </label>
+                        <select
+                          className="repo-branch-select"
+                          value={st?.currentBranch ?? ""}
+                          disabled={
+                            busy ||
+                            (!branchesReady && repoBranches.length === 0) ||
+                            !!st?.error
+                          }
+                          onChange={(e) => {
+                            const v = e.target.value;
+                            if (v && v !== st?.currentBranch) {
+                              void onCheckout(repo.id, v);
+                            }
+                          }}
+                        >
+                          {!st?.currentBranch && (
+                            <option value="">
+                              {st?.isDetached ? "detached…" : "Select…"}
+                            </option>
+                          )}
+                          {st?.currentBranch &&
+                            !repoBranches.some(
+                              (b) =>
+                                b.kind === "local" &&
+                                b.name === st.currentBranch,
+                            ) && (
+                              <option value={st.currentBranch}>
+                                {st.currentBranch}
+                                {st.isDetached ? " (detached)" : ""}
+                              </option>
+                            )}
+                          <optgroup label="Local">
+                            {repoBranches
+                              .filter((b) => b.kind === "local")
+                              .map((b) => (
+                                <option key={b.name} value={b.name}>
+                                  {b.name}
+                                </option>
+                              ))}
+                          </optgroup>
+                          <optgroup label="Remote">
+                            {repoBranches
+                              .filter((b) => b.kind === "remote")
+                              .map((b) => (
+                                <option key={b.name} value={b.name}>
+                                  {b.name}
+                                </option>
+                              ))}
+                          </optgroup>
+                        </select>
+                      </div>
+                    </div>
+
+                    <div
+                      className="repo-card-actions"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <div className="repo-actions-primary">
+                        <button
+                          className="btn btn-sm"
+                          disabled={busy}
+                          onClick={() =>
+                            void runRepoOp(repo.id, "Fetch", fetchRepo)
+                          }
+                        >
+                          {thisBusy ? "…" : "Fetch"}
+                        </button>
+                        <button
+                          className="btn btn-sm"
+                          disabled={busy}
+                          onClick={() => void openPull(repo.id, repo.name)}
+                        >
+                          Pull
+                        </button>
+                        <button
+                          className="btn btn-sm"
+                          disabled={busy}
+                          onClick={() =>
+                            void runRepoOp(repo.id, "Push", pushRepo)
+                          }
+                        >
+                          Push
+                        </button>
+                        <button
+                          className="btn btn-sm"
+                          disabled={busy || !st?.isDirty}
+                          title="Stage / unstage / commit"
+                          onClick={() => void openCommit(repo.id, repo.name)}
+                        >
+                          Stage
+                        </button>
+                        <button
+                          className="btn btn-sm"
+                          disabled={busy || !!st?.isDetached}
+                          title="Merge another branch into current"
+                          onClick={() => void openMerge(repo.id, repo.name)}
+                        >
+                          Merge
+                        </button>
+                        <button
+                          className="btn btn-sm"
+                          disabled={busy || !!st?.isDetached}
+                          title="Rebase current branch onto another"
+                          onClick={() => void openRebase(repo.id, repo.name)}
+                        >
+                          Rebase
+                        </button>
+                      </div>
+                      <div className="repo-actions-secondary">
+                        {st?.isMerging ? (
+                          <button
+                            className="btn btn-sm btn-danger"
+                            disabled={busy}
+                            onClick={() => void onAbortMerge(repo.id)}
+                          >
+                            Abort merge
+                          </button>
+                        ) : null}
+                        {st?.isRebasing ? (
+                          <button
+                            className="btn btn-sm btn-danger"
+                            disabled={busy}
+                            onClick={() => void onAbortRebase(repo.id)}
+                          >
+                            Abort rebase
+                          </button>
+                        ) : null}
+                        <button
+                          className="btn btn-sm btn-ghost"
+                          disabled={busy}
+                          onClick={() => void openHistory(repo.id, repo.name)}
+                        >
+                          History
+                        </button>
+                        <button
+                          className="btn btn-sm btn-ghost"
+                          disabled={busy}
+                          onClick={() => void openBranches(repo.id, repo.name)}
+                        >
+                          Branches
+                        </button>
+                        <button
+                          className="btn btn-sm btn-ghost"
+                          disabled={busy}
+                          onClick={() => void onOpenFolder(repo.id)}
+                        >
+                          Folder
+                        </button>
+                        <button
+                          className="btn btn-sm btn-danger"
+                          disabled={busy}
+                          onClick={() => void onRemove(repo.id, repo.name)}
+                        >
+                          Remove
+                        </button>
+                      </div>
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+          ) : (
+            /* —— Tabbed repo detail —— */
+            <div className="repo-tabs-view">
+              <div
+                className="repo-tabs-bar"
+                role="tablist"
+                aria-label="Repositories"
+              >
+                {detail.repos.map((repo) => {
+                  const st = statuses[repo.id];
+                  const selected =
+                    (activeTabId ?? detail.repos[0]?.id) === repo.id;
+                  const pulls = localPullCount(branches[repo.id]);
+                  return (
+                    <button
+                      key={repo.id}
+                      type="button"
+                      role="tab"
+                      aria-selected={selected}
+                      className={`repo-tab${selected ? " active" : ""}${
+                        repo.enabled ? "" : " disabled"
+                      }`}
+                      onClick={() => {
+                        setActiveTabId(repo.id);
+                        setFocusedRepoId(repo.id);
+                      }}
+                      onContextMenu={(e) => openCtx(e, repoContextItems(repo))}
+                      title={
+                        pulls > 0
+                          ? `${repo.path} · ${pulls} branch(es) behind upstream`
+                          : repo.path
+                      }
+                    >
+                      <span className="repo-tab-name">{repo.name}</span>
+                      {pulls > 0 ? (
+                        <span
+                          className="repo-tab-pull"
+                          title={`${pulls} can pull`}
+                        >
+                          ↓{pulls}
+                        </span>
+                      ) : null}
+                      {st?.isDirty ? (
+                        <span className="repo-tab-dot dirty" title="Dirty" />
+                      ) : st?.error ? (
+                        <span className="repo-tab-dot error" title="Error" />
+                      ) : (
+                        <span className="repo-tab-dot clean" title="Clean" />
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+
+              {activeRepo && (
+                <div className="repo-tab-panel" role="tabpanel">
+                  <div className="repo-tab-header">
+                    <div className="repo-tab-header-main">
+                      <div className="repo-card-title-row">
+                        <h2 className="repo-card-name">{activeRepo.name}</h2>
+                        <label className="option-check" style={{ margin: 0 }}>
+                          <input
+                            type="checkbox"
+                            checked={activeRepo.enabled}
+                            onChange={(e) =>
+                              void onToggle(activeRepo.id, e.target.checked)
+                            }
+                          />
+                          <span className="muted">Enabled for batch</span>
+                        </label>
+                        {activeSt?.isMerging ? (
+                          <span className="badge warn">merging</span>
+                        ) : null}
+                        {activeSt?.isRebasing ? (
+                          <span className="badge warn">rebasing</span>
+                        ) : null}
+                        {activeSt?.error ? (
+                          <span className="badge err">{activeSt.error}</span>
+                        ) : activeSt?.isDirty ? (
+                          <span className="badge warn">dirty</span>
+                        ) : (
+                          <span className="badge ok">clean</span>
+                        )}
+                        {activeSt?.ahead != null || activeSt?.behind != null ? (
+                          <span
+                            className={
+                              (activeSt.ahead ?? 0) > 0 ||
+                              (activeSt.behind ?? 0) > 0
+                                ? "sync-drift mono"
+                                : "muted mono"
+                            }
+                          >
+                            ↑{activeSt.ahead ?? 0} ↓{activeSt.behind ?? 0}
+                          </span>
+                        ) : null}
+                      </div>
+                      <div className="muted mono" title={activeRepo.path}>
+                        {activeRepo.path}
+                      </div>
+                    </div>
+                    <div className="repo-tab-header-side">
+                      <label className="repo-branch-label muted">Branch</label>
+                      <select
+                        className="repo-branch-select"
+                        value={activeSt?.currentBranch ?? ""}
+                        disabled={
+                          busy ||
+                          (!branchesReady && activeBranches.length === 0) ||
+                          !!activeSt?.error
+                        }
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          if (v && v !== activeSt?.currentBranch) {
+                            void onCheckout(activeRepo.id, v).then(() =>
+                              loadTabDetail(activeRepo.id),
+                            );
+                          }
+                        }}
+                      >
+                        {!activeSt?.currentBranch && (
+                          <option value="">
+                            {activeSt?.isDetached ? "detached…" : "Select…"}
+                          </option>
+                        )}
+                        {activeSt?.currentBranch &&
+                          !activeBranches.some(
+                            (b) =>
+                              b.kind === "local" &&
+                              b.name === activeSt.currentBranch,
+                          ) && (
+                            <option value={activeSt.currentBranch}>
+                              {activeSt.currentBranch}
+                            </option>
+                          )}
+                        <optgroup label="Local">
+                          {activeBranches
+                            .filter((b) => b.kind === "local")
+                            .map((b) => (
+                              <option key={b.name} value={b.name}>
+                                {b.name}
+                              </option>
+                            ))}
+                        </optgroup>
+                        <optgroup label="Remote">
+                          {activeBranches
+                            .filter((b) => b.kind === "remote")
+                            .map((b) => (
+                              <option key={b.name} value={b.name}>
+                                {b.name}
+                              </option>
+                            ))}
+                        </optgroup>
+                      </select>
+                    </div>
                   </div>
 
                   <div
-                    className="repo-card-branch"
-                    onClick={(e) => e.stopPropagation()}
+                    className="repo-card-actions"
+                    style={{ borderTop: "none" }}
                   >
-                    <label className="repo-branch-label muted">Branch</label>
-                    <select
-                      className="repo-branch-select"
-                      value={st?.currentBranch ?? ""}
-                      disabled={
-                        busy ||
-                        (!branchesReady && repoBranches.length === 0) ||
-                        !!st?.error
-                      }
-                      onChange={(e) => {
-                        const v = e.target.value;
-                        if (v && v !== st?.currentBranch) {
-                          void onCheckout(repo.id, v);
+                    <div className="repo-actions-primary">
+                      <button
+                        className="btn btn-sm"
+                        disabled={busy}
+                        onClick={() =>
+                          void runRepoOp(
+                            activeRepo.id,
+                            "Fetch",
+                            fetchRepo,
+                          ).then(() => loadTabDetail(activeRepo.id))
                         }
-                      }}
-                    >
-                      {!st?.currentBranch && (
-                        <option value="">
-                          {st?.isDetached ? "detached…" : "Select…"}
-                        </option>
-                      )}
-                      {st?.currentBranch &&
-                        !repoBranches.some(
-                          (b) =>
-                            b.kind === "local" && b.name === st.currentBranch,
-                        ) && (
-                          <option value={st.currentBranch}>
-                            {st.currentBranch}
-                            {st.isDetached ? " (detached)" : ""}
-                          </option>
-                        )}
-                      <optgroup label="Local">
-                        {repoBranches
-                          .filter((b) => b.kind === "local")
-                          .map((b) => (
-                            <option key={b.name} value={b.name}>
-                              {b.name}
-                            </option>
-                          ))}
-                      </optgroup>
-                      <optgroup label="Remote">
-                        {repoBranches
-                          .filter((b) => b.kind === "remote")
-                          .map((b) => (
-                            <option key={b.name} value={b.name}>
-                              {b.name}
-                            </option>
-                          ))}
-                      </optgroup>
-                    </select>
+                      >
+                        {rowBusy === activeRepo.id ? "…" : "Fetch"}
+                      </button>
+                      <button
+                        className="btn btn-sm"
+                        disabled={busy}
+                        onClick={() =>
+                          void openPull(activeRepo.id, activeRepo.name)
+                        }
+                      >
+                        Pull
+                      </button>
+                      <button
+                        className="btn btn-sm"
+                        disabled={busy}
+                        onClick={() =>
+                          void runRepoOp(activeRepo.id, "Push", pushRepo).then(
+                            () => loadTabDetail(activeRepo.id),
+                          )
+                        }
+                      >
+                        Push
+                      </button>
+                      <button
+                        className="btn btn-sm"
+                        disabled={busy || !activeSt?.isDirty}
+                        onClick={() =>
+                          void openCommit(activeRepo.id, activeRepo.name)
+                        }
+                      >
+                        Stage
+                      </button>
+                      <button
+                        className="btn btn-sm"
+                        disabled={busy || !!activeSt?.isDetached}
+                        onClick={() =>
+                          void openMerge(activeRepo.id, activeRepo.name)
+                        }
+                      >
+                        Merge
+                      </button>
+                      <button
+                        className="btn btn-sm"
+                        disabled={busy || !!activeSt?.isDetached}
+                        onClick={() =>
+                          void openRebase(activeRepo.id, activeRepo.name)
+                        }
+                      >
+                        Rebase
+                      </button>
+                      {activeSt?.isMerging ? (
+                        <button
+                          className="btn btn-sm btn-danger"
+                          disabled={busy}
+                          onClick={() => void onAbortMerge(activeRepo.id)}
+                        >
+                          Abort merge
+                        </button>
+                      ) : null}
+                      {activeSt?.isRebasing ? (
+                        <button
+                          className="btn btn-sm btn-danger"
+                          disabled={busy}
+                          onClick={() => void onAbortRebase(activeRepo.id)}
+                        >
+                          Abort rebase
+                        </button>
+                      ) : null}
+                      <button
+                        className="btn btn-sm btn-ghost"
+                        disabled={busy}
+                        onClick={() =>
+                          void openBranches(activeRepo.id, activeRepo.name)
+                        }
+                      >
+                        Branches
+                      </button>
+                      <button
+                        className="btn btn-sm btn-ghost"
+                        disabled={busy}
+                        onClick={() => void onOpenFolder(activeRepo.id)}
+                      >
+                        Folder
+                      </button>
+                      <button
+                        className="btn btn-sm"
+                        disabled={busy || tabDetailLoading}
+                        onClick={() => void loadTabDetail(activeRepo.id)}
+                      >
+                        Refresh detail
+                      </button>
+                      <button
+                        className="btn btn-sm btn-danger"
+                        disabled={busy}
+                        onClick={() =>
+                          void onRemove(activeRepo.id, activeRepo.name)
+                        }
+                      >
+                        Remove
+                      </button>
+                    </div>
                   </div>
-                </div>
 
-                <div
-                  className="repo-card-actions"
-                  onClick={(e) => e.stopPropagation()}
-                >
-                  <div className="repo-actions-primary">
-                    <button
-                      className="btn btn-sm"
-                      disabled={busy}
-                      onClick={() =>
-                        void runRepoOp(repo.id, "Fetch", fetchRepo)
-                      }
+                  {tabDetailError && (
+                    <div
+                      className="card"
+                      style={{ borderColor: "var(--danger)" }}
                     >
-                      {thisBusy ? "…" : "Fetch"}
-                    </button>
-                    <button
-                      className="btn btn-sm"
-                      disabled={busy}
-                      onClick={() => void openPull(repo.id, repo.name)}
-                    >
-                      Pull
-                    </button>
-                    <button
-                      className="btn btn-sm"
-                      disabled={busy}
-                      onClick={() => void runRepoOp(repo.id, "Push", pushRepo)}
-                    >
-                      Push
-                    </button>
-                    <button
-                      className="btn btn-sm"
-                      disabled={busy || !st?.isDirty}
-                      title="Stage / unstage / commit"
-                      onClick={() => void openCommit(repo.id, repo.name)}
-                    >
-                      Stage
-                    </button>
-                    <button
-                      className="btn btn-sm"
-                      disabled={busy || !!st?.isDetached}
-                      title="Merge another branch into current"
-                      onClick={() => void openMerge(repo.id, repo.name)}
-                    >
-                      Merge
-                    </button>
-                    <button
-                      className="btn btn-sm"
-                      disabled={busy || !!st?.isDetached}
-                      title="Rebase current branch onto another"
-                      onClick={() => void openRebase(repo.id, repo.name)}
-                    >
-                      Rebase
-                    </button>
-                  </div>
-                  <div className="repo-actions-secondary">
-                    {st?.isMerging ? (
-                      <button
-                        className="btn btn-sm btn-danger"
-                        disabled={busy}
-                        onClick={() => void onAbortMerge(repo.id)}
-                      >
-                        Abort merge
-                      </button>
-                    ) : null}
-                    {st?.isRebasing ? (
-                      <button
-                        className="btn btn-sm btn-danger"
-                        disabled={busy}
-                        onClick={() => void onAbortRebase(repo.id)}
-                      >
-                        Abort rebase
-                      </button>
-                    ) : null}
-                    <button
-                      className="btn btn-sm btn-ghost"
-                      disabled={busy}
-                      onClick={() => void openHistory(repo.id, repo.name)}
-                    >
-                      History
-                    </button>
-                    <button
-                      className="btn btn-sm btn-ghost"
-                      disabled={busy}
-                      onClick={() => void openBranches(repo.id, repo.name)}
-                    >
-                      Branches
-                    </button>
-                    <button
-                      className="btn btn-sm btn-ghost"
-                      disabled={busy}
-                      onClick={() => void onOpenFolder(repo.id)}
-                    >
-                      Folder
-                    </button>
-                    <button
-                      className="btn btn-sm btn-danger"
-                      disabled={busy}
-                      onClick={() => void onRemove(repo.id, repo.name)}
-                    >
-                      Remove
-                    </button>
-                  </div>
-                </div>
-              </article>
-            );
-          })}
-        </div>
-      ) : (
-        /* —— Tabbed repo detail —— */
-        <div className="repo-tabs-view">
-          <div className="repo-tabs-bar" role="tablist" aria-label="Repositories">
-            {detail.repos.map((repo) => {
-              const st = statuses[repo.id];
-              const selected = (activeTabId ?? detail.repos[0]?.id) === repo.id;
-              const pulls = localPullCount(branches[repo.id]);
-              return (
-                <button
-                  key={repo.id}
-                  type="button"
-                  role="tab"
-                  aria-selected={selected}
-                  className={`repo-tab${selected ? " active" : ""}${
-                    repo.enabled ? "" : " disabled"
-                  }`}
-                  onClick={() => {
-                    setActiveTabId(repo.id);
-                    setFocusedRepoId(repo.id);
-                  }}
-                  onContextMenu={(e) => openCtx(e, repoContextItems(repo))}
-                  title={
-                    pulls > 0
-                      ? `${repo.path} · ${pulls} branch(es) behind upstream`
-                      : repo.path
-                  }
-                >
-                  <span className="repo-tab-name">{repo.name}</span>
-                  {pulls > 0 ? (
-                    <span className="repo-tab-pull" title={`${pulls} can pull`}>
-                      ↓{pulls}
-                    </span>
-                  ) : null}
-                  {st?.isDirty ? (
-                    <span className="repo-tab-dot dirty" title="Dirty" />
-                  ) : st?.error ? (
-                    <span className="repo-tab-dot error" title="Error" />
-                  ) : (
-                    <span className="repo-tab-dot clean" title="Clean" />
+                      <span className="badge err">{tabDetailError}</span>
+                    </div>
                   )}
-                </button>
-              );
-            })}
-          </div>
 
-          {activeRepo && (
-            <div className="repo-tab-panel" role="tabpanel">
-              <div className="repo-tab-header">
-                <div className="repo-tab-header-main">
-                  <div className="repo-card-title-row">
-                    <h2 className="repo-card-name">{activeRepo.name}</h2>
-                    <label className="option-check" style={{ margin: 0 }}>
-                      <input
-                        type="checkbox"
-                        checked={activeRepo.enabled}
-                        onChange={(e) =>
-                          void onToggle(activeRepo.id, e.target.checked)
-                        }
-                      />
-                      <span className="muted">Enabled for batch</span>
-                    </label>
-                    {activeSt?.isMerging ? (
-                      <span className="badge warn">merging</span>
-                    ) : null}
-                    {activeSt?.isRebasing ? (
-                      <span className="badge warn">rebasing</span>
-                    ) : null}
-                    {activeSt?.error ? (
-                      <span className="badge err">{activeSt.error}</span>
-                    ) : activeSt?.isDirty ? (
-                      <span className="badge warn">dirty</span>
-                    ) : (
-                      <span className="badge ok">clean</span>
-                    )}
-                    {activeSt?.ahead != null || activeSt?.behind != null ? (
-                      <span
-                        className={
-                          (activeSt.ahead ?? 0) > 0 ||
-                          (activeSt.behind ?? 0) > 0
-                            ? "sync-drift mono"
-                            : "muted mono"
-                        }
-                      >
-                        ↑{activeSt.ahead ?? 0} ↓{activeSt.behind ?? 0}
-                      </span>
-                    ) : null}
-                  </div>
-                  <div className="muted mono" title={activeRepo.path}>
-                    {activeRepo.path}
-                  </div>
-                </div>
-                <div className="repo-tab-header-side">
-                  <label className="repo-branch-label muted">Branch</label>
-                  <select
-                    className="repo-branch-select"
-                    value={activeSt?.currentBranch ?? ""}
-                    disabled={
-                      busy ||
-                      (!branchesReady && activeBranches.length === 0) ||
-                      !!activeSt?.error
-                    }
-                    onChange={(e) => {
-                      const v = e.target.value;
-                      if (v && v !== activeSt?.currentBranch) {
-                        void onCheckout(activeRepo.id, v).then(() =>
-                          loadTabDetail(activeRepo.id),
-                        );
-                      }
-                    }}
-                  >
-                    {!activeSt?.currentBranch && (
-                      <option value="">
-                        {activeSt?.isDetached ? "detached…" : "Select…"}
-                      </option>
-                    )}
-                    {activeSt?.currentBranch &&
-                      !activeBranches.some(
-                        (b) =>
-                          b.kind === "local" &&
-                          b.name === activeSt.currentBranch,
-                      ) && (
-                        <option value={activeSt.currentBranch}>
-                          {activeSt.currentBranch}
-                        </option>
+                  <div className="repo-tab-columns">
+                    <section className="repo-tab-section working-tree-section">
+                      <div className="repo-tab-section-head">
+                        <h3>Working tree</h3>
+                        <span className="muted">
+                          {tabFiles.length} change
+                          {tabFiles.length === 1 ? "" : "s"}
+                          {tabFiles.filter((f) => f.status === "?").length > 0
+                            ? ` · ${tabFiles.filter((f) => f.status === "?").length} untracked`
+                            : ""}
+                        </span>
+                      </div>
+                      {tabDetailLoading ? (
+                        <p className="muted">Loading…</p>
+                      ) : tabFiles.length === 0 ? (
+                        <p className="muted">
+                          Clean — no modified or untracked files
+                        </p>
+                      ) : (
+                        <div className="tab-file-list">
+                          {tabFiles.map((f) => (
+                            <div
+                              key={f.path}
+                              className="tab-file-row"
+                              onContextMenu={(e) => {
+                                const items: ContextMenuItem[] = [
+                                  { type: "label", id: "lbl", label: f.path },
+                                  {
+                                    id: "stage-modal",
+                                    label: "Open in stage / commit…",
+                                    onSelect: () =>
+                                      void openCommit(
+                                        activeRepo.id,
+                                        activeRepo.name,
+                                      ),
+                                  },
+                                  {
+                                    id: "copy",
+                                    label: "Copy path",
+                                    onSelect: () =>
+                                      void copyText(f.path, "path"),
+                                  },
+                                ];
+                                if (f.unstaged) {
+                                  items.splice(1, 0, {
+                                    id: "stage",
+                                    label: "Stage",
+                                    onSelect: () => {
+                                      void stageFiles(activeRepo.id, [f.path])
+                                        .then(() => {
+                                          setToast({ msg: `Staged ${f.path}` });
+                                          void loadTabDetail(activeRepo.id);
+                                          void refresh();
+                                        })
+                                        .catch((err) =>
+                                          setToast({
+                                            msg: String(err),
+                                            error: true,
+                                          }),
+                                        );
+                                    },
+                                  });
+                                }
+                                if (f.staged) {
+                                  items.splice(1, 0, {
+                                    id: "unstage",
+                                    label: "Unstage",
+                                    onSelect: () => {
+                                      void unstageFiles(activeRepo.id, [f.path])
+                                        .then(() => {
+                                          setToast({
+                                            msg: `Unstaged ${f.path}`,
+                                          });
+                                          void loadTabDetail(activeRepo.id);
+                                          void refresh();
+                                        })
+                                        .catch((err) =>
+                                          setToast({
+                                            msg: String(err),
+                                            error: true,
+                                          }),
+                                        );
+                                    },
+                                  });
+                                }
+                                openCtx(e, items);
+                              }}
+                            >
+                              <span
+                                className={`file-status mono status-${
+                                  f.status === "?"
+                                    ? "untracked"
+                                    : f.status.toLowerCase()
+                                }`}
+                              >
+                                {f.status === "?"
+                                  ? "NEW"
+                                  : f.status === "M"
+                                    ? "MOD"
+                                    : f.status === "A"
+                                      ? "ADD"
+                                      : f.status === "D"
+                                        ? "DEL"
+                                        : f.status}
+                              </span>
+                              <span className="mono file-path" title={f.path}>
+                                {f.path}
+                              </span>
+                              {f.staged && !f.unstaged && (
+                                <span className="badge ok">staged</span>
+                              )}
+                              {!f.staged && f.unstaged && (
+                                <span className="badge warn">
+                                  {f.status === "?" ? "untracked" : "unstaged"}
+                                </span>
+                              )}
+                              {f.staged && f.unstaged && (
+                                <span className="badge warn">partial</span>
+                              )}
+                            </div>
+                          ))}
+                          <div
+                            className="actions"
+                            style={{ marginTop: "0.5rem" }}
+                          >
+                            <button
+                              className="btn btn-sm btn-primary"
+                              disabled={!activeSt?.isDirty}
+                              onClick={() =>
+                                void openCommit(activeRepo.id, activeRepo.name)
+                              }
+                            >
+                              Open stage / commit
+                            </button>
+                          </div>
+                        </div>
                       )}
-                    <optgroup label="Local">
-                      {activeBranches
-                        .filter((b) => b.kind === "local")
-                        .map((b) => (
-                          <option key={b.name} value={b.name}>
-                            {b.name}
-                          </option>
-                        ))}
-                    </optgroup>
-                    <optgroup label="Remote">
-                      {activeBranches
-                        .filter((b) => b.kind === "remote")
-                        .map((b) => (
-                          <option key={b.name} value={b.name}>
-                            {b.name}
-                          </option>
-                        ))}
-                    </optgroup>
-                  </select>
-                </div>
-              </div>
+                    </section>
 
-              <div className="repo-card-actions" style={{ borderTop: "none" }}>
-                <div className="repo-actions-primary">
-                  <button
-                    className="btn btn-sm"
-                    disabled={busy}
-                    onClick={() =>
-                      void runRepoOp(activeRepo.id, "Fetch", fetchRepo).then(
-                        () => loadTabDetail(activeRepo.id),
-                      )
-                    }
-                  >
-                    {rowBusy === activeRepo.id ? "…" : "Fetch"}
-                  </button>
-                  <button
-                    className="btn btn-sm"
-                    disabled={busy}
-                    onClick={() => void openPull(activeRepo.id, activeRepo.name)}
-                  >
-                    Pull
-                  </button>
-                  <button
-                    className="btn btn-sm"
-                    disabled={busy}
-                    onClick={() =>
-                      void runRepoOp(activeRepo.id, "Push", pushRepo).then(
-                        () => loadTabDetail(activeRepo.id),
-                      )
-                    }
-                  >
-                    Push
-                  </button>
-                  <button
-                    className="btn btn-sm"
-                    disabled={busy || !activeSt?.isDirty}
-                    onClick={() =>
-                      void openCommit(activeRepo.id, activeRepo.name)
-                    }
-                  >
-                    Stage
-                  </button>
-                  <button
-                    className="btn btn-sm"
-                    disabled={busy || !!activeSt?.isDetached}
-                    onClick={() =>
-                      void openMerge(activeRepo.id, activeRepo.name)
-                    }
-                  >
-                    Merge
-                  </button>
-                  <button
-                    className="btn btn-sm"
-                    disabled={busy || !!activeSt?.isDetached}
-                    onClick={() =>
-                      void openRebase(activeRepo.id, activeRepo.name)
-                    }
-                  >
-                    Rebase
-                  </button>
-                  {activeSt?.isMerging ? (
-                    <button
-                      className="btn btn-sm btn-danger"
-                      disabled={busy}
-                      onClick={() => void onAbortMerge(activeRepo.id)}
-                    >
-                      Abort merge
-                    </button>
-                  ) : null}
-                  {activeSt?.isRebasing ? (
-                    <button
-                      className="btn btn-sm btn-danger"
-                      disabled={busy}
-                      onClick={() => void onAbortRebase(activeRepo.id)}
-                    >
-                      Abort rebase
-                    </button>
-                  ) : null}
-                  <button
-                    className="btn btn-sm btn-ghost"
-                    disabled={busy}
-                    onClick={() =>
-                      void openBranches(activeRepo.id, activeRepo.name)
-                    }
-                  >
-                    Branches
-                  </button>
-                  <button
-                    className="btn btn-sm btn-ghost"
-                    disabled={busy}
-                    onClick={() => void onOpenFolder(activeRepo.id)}
-                  >
-                    Folder
-                  </button>
-                  <button
-                    className="btn btn-sm"
-                    disabled={busy || tabDetailLoading}
-                    onClick={() => void loadTabDetail(activeRepo.id)}
-                  >
-                    Refresh detail
-                  </button>
-                  <button
-                    className="btn btn-sm btn-danger"
-                    disabled={busy}
-                    onClick={() =>
-                      void onRemove(activeRepo.id, activeRepo.name)
-                    }
-                  >
-                    Remove
-                  </button>
-                </div>
-              </div>
-
-              {tabDetailError && (
-                <div className="card" style={{ borderColor: "var(--danger)" }}>
-                  <span className="badge err">{tabDetailError}</span>
+                    <section className="repo-tab-section commit-history-section">
+                      <div className="repo-tab-section-head">
+                        <div>
+                          <h3>Commit history</h3>
+                          <small className="muted">
+                            All local and remote branches
+                          </small>
+                        </div>
+                        <span className="muted">
+                          {tabCommits.length} commit
+                          {tabCommits.length === 1 ? "" : "s"} loaded
+                        </span>
+                      </div>
+                      {tabDetailLoading ? (
+                        <p className="muted">Loading…</p>
+                      ) : tabCommits.length === 0 ? (
+                        <p className="muted">No commits</p>
+                      ) : (
+                        <div className="tab-commit-graph-wrap">
+                          <CommitGraph
+                            commits={tabCommits}
+                            onContextMenu={(e, c) =>
+                              openCtx(e, commitContextItems(c, activeRepo.id))
+                            }
+                          />
+                          <div
+                            className="actions"
+                            style={{ marginTop: "0.5rem" }}
+                          >
+                            <button
+                              className="btn btn-sm"
+                              onClick={() =>
+                                void openHistory(activeRepo.id, activeRepo.name)
+                              }
+                            >
+                              Open expanded history…
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </section>
+                  </div>
                 </div>
               )}
-
-              <div className="repo-tab-columns">
-                <section className="repo-tab-section working-tree-section">
-                  <div className="repo-tab-section-head">
-                    <h3>Working tree</h3>
-                    <span className="muted">
-                      {tabFiles.length} change
-                      {tabFiles.length === 1 ? "" : "s"}
-                      {tabFiles.filter((f) => f.status === "?").length > 0
-                        ? ` · ${tabFiles.filter((f) => f.status === "?").length} untracked`
-                        : ""}
-                    </span>
-                  </div>
-                  {tabDetailLoading ? (
-                    <p className="muted">Loading…</p>
-                  ) : tabFiles.length === 0 ? (
-                    <p className="muted">Clean — no modified or untracked files</p>
-                  ) : (
-                    <div className="tab-file-list">
-                      {tabFiles.map((f) => (
-                        <div
-                          key={f.path}
-                          className="tab-file-row"
-                          onContextMenu={(e) => {
-                            const items: ContextMenuItem[] = [
-                              { type: "label", id: "lbl", label: f.path },
-                              {
-                                id: "stage-modal",
-                                label: "Open in stage / commit…",
-                                onSelect: () =>
-                                  void openCommit(
-                                    activeRepo.id,
-                                    activeRepo.name,
-                                  ),
-                              },
-                              {
-                                id: "copy",
-                                label: "Copy path",
-                                onSelect: () => void copyText(f.path, "path"),
-                              },
-                            ];
-                            if (f.unstaged) {
-                              items.splice(1, 0, {
-                                id: "stage",
-                                label: "Stage",
-                                onSelect: () => {
-                                  void stageFiles(activeRepo.id, [f.path])
-                                    .then(() => {
-                                      setToast({ msg: `Staged ${f.path}` });
-                                      void loadTabDetail(activeRepo.id);
-                                      void refresh();
-                                    })
-                                    .catch((err) =>
-                                      setToast({
-                                        msg: String(err),
-                                        error: true,
-                                      }),
-                                    );
-                                },
-                              });
-                            }
-                            if (f.staged) {
-                              items.splice(1, 0, {
-                                id: "unstage",
-                                label: "Unstage",
-                                onSelect: () => {
-                                  void unstageFiles(activeRepo.id, [f.path])
-                                    .then(() => {
-                                      setToast({ msg: `Unstaged ${f.path}` });
-                                      void loadTabDetail(activeRepo.id);
-                                      void refresh();
-                                    })
-                                    .catch((err) =>
-                                      setToast({
-                                        msg: String(err),
-                                        error: true,
-                                      }),
-                                    );
-                                },
-                              });
-                            }
-                            openCtx(e, items);
-                          }}
-                        >
-                          <span
-                            className={`file-status mono status-${
-                              f.status === "?"
-                                ? "untracked"
-                                : f.status.toLowerCase()
-                            }`}
-                          >
-                            {f.status === "?"
-                              ? "NEW"
-                              : f.status === "M"
-                                ? "MOD"
-                                : f.status === "A"
-                                  ? "ADD"
-                                  : f.status === "D"
-                                    ? "DEL"
-                                    : f.status}
-                          </span>
-                          <span className="mono file-path" title={f.path}>
-                            {f.path}
-                          </span>
-                          {f.staged && !f.unstaged && (
-                            <span className="badge ok">staged</span>
-                          )}
-                          {!f.staged && f.unstaged && (
-                            <span className="badge warn">
-                              {f.status === "?" ? "untracked" : "unstaged"}
-                            </span>
-                          )}
-                          {f.staged && f.unstaged && (
-                            <span className="badge warn">partial</span>
-                          )}
-                        </div>
-                      ))}
-                      <div className="actions" style={{ marginTop: "0.5rem" }}>
-                        <button
-                          className="btn btn-sm btn-primary"
-                          disabled={!activeSt?.isDirty}
-                          onClick={() =>
-                            void openCommit(activeRepo.id, activeRepo.name)
-                          }
-                        >
-                          Open stage / commit
-                        </button>
-                      </div>
-                    </div>
-                  )}
-                </section>
-
-                <section className="repo-tab-section commit-history-section">
-                  <div className="repo-tab-section-head">
-                    <div>
-                      <h3>Commit history</h3>
-                      <small className="muted">All local and remote branches</small>
-                    </div>
-                    <span className="muted">
-                      {tabCommits.length} commit
-                      {tabCommits.length === 1 ? "" : "s"} loaded
-                    </span>
-                  </div>
-                  {tabDetailLoading ? (
-                    <p className="muted">Loading…</p>
-                  ) : tabCommits.length === 0 ? (
-                    <p className="muted">No commits</p>
-                  ) : (
-                    <div className="tab-commit-graph-wrap">
-                      <CommitGraph
-                        commits={tabCommits}
-                        onContextMenu={(e, c) =>
-                          openCtx(e, commitContextItems(c, activeRepo.id))
-                        }
-                      />
-                      <div className="actions" style={{ marginTop: "0.5rem" }}>
-                        <button
-                          className="btn btn-sm"
-                          onClick={() =>
-                            void openHistory(activeRepo.id, activeRepo.name)
-                          }
-                        >
-                          Open expanded history…
-                        </button>
-                      </div>
-                    </div>
-                  )}
-                </section>
-              </div>
             </div>
           )}
-        </div>
-      )}
         </div>
 
         <RepoInspector
@@ -2397,7 +2470,8 @@ export function ProjectDetail() {
             if (focusedRepo) void onCheckout(focusedRepo.id, branch);
           }}
           onOpenBranches={() => {
-            if (focusedRepo) void openBranches(focusedRepo.id, focusedRepo.name);
+            if (focusedRepo)
+              void openBranches(focusedRepo.id, focusedRepo.name);
           }}
           onFetch={() => {
             if (!focusedRepo) return;
@@ -2658,9 +2732,7 @@ export function ProjectDetail() {
                 <button
                   className="btn btn-primary"
                   disabled={
-                    commitBusy ||
-                    !commitMsg.trim() ||
-                    selectedPaths.size === 0
+                    commitBusy || !commitMsg.trim() || selectedPaths.size === 0
                   }
                   title="Stage selected files, then commit"
                   onClick={() => void submitCommit(true)}
@@ -2808,7 +2880,8 @@ export function ProjectDetail() {
                           : "Merge required"}
                     </span>
                     <span className="muted mono">
-                      ↑{pullPreview.ahead} ↓{pullPreview.behind} · {pullPreview.currentHead}
+                      ↑{pullPreview.ahead} ↓{pullPreview.behind} ·{" "}
+                      {pullPreview.currentHead}
                     </span>
                   </div>
                   <p style={{ marginBottom: 0 }}>{pullPreview.message}</p>
@@ -2846,8 +2919,9 @@ export function ProjectDetail() {
                 pullPreview.action === "merge" &&
                 !pullResult ? (
                   <div className="merge-banner">
-                    Fast-forward only cannot pull this branch because its history
-                    has diverged. Choose the recommended merge strategy or rebase.
+                    Fast-forward only cannot pull this branch because its
+                    history has diverged. Choose the recommended merge strategy
+                    or rebase.
                   </div>
                 ) : null}
 
@@ -2956,7 +3030,10 @@ export function ProjectDetail() {
                 </div>
               </div>
             ) : (
-              <div className="actions" style={{ justifyContent: "flex-end", marginTop: "1rem" }}>
+              <div
+                className="actions"
+                style={{ justifyContent: "flex-end", marginTop: "1rem" }}
+              >
                 <button
                   className="btn"
                   disabled={pullBusy}
@@ -3052,8 +3129,7 @@ export function ProjectDetail() {
                         .filter(
                           (b) =>
                             b.kind === "local" &&
-                            b.name !==
-                              statuses[mergeRepoId]?.currentBranch,
+                            b.name !== statuses[mergeRepoId]?.currentBranch,
                         )
                         .map((b) => (
                           <option key={b.name} value={b.name}>
@@ -3115,13 +3191,13 @@ export function ProjectDetail() {
                     }`}
                   >
                     <span
-                      className={`badge ${
-                        mergeResult.success ? "ok" : "err"
-                      }`}
+                      className={`badge ${mergeResult.success ? "ok" : "err"}`}
                     >
                       {mergeResult.status}
                     </span>
-                    <p style={{ margin: "0.4rem 0 0" }}>{mergeResult.message}</p>
+                    <p style={{ margin: "0.4rem 0 0" }}>
+                      {mergeResult.message}
+                    </p>
                     {mergeResult.conflictFiles.length > 0 && (
                       <ul className="result-list">
                         {mergeResult.conflictFiles.map((f) => (
@@ -3173,7 +3249,10 @@ export function ProjectDetail() {
                             onToast={(msg, error) => setToast({ msg, error })}
                           />
                         ) : null}
-                        <div className="actions" style={{ marginTop: "0.5rem" }}>
+                        <div
+                          className="actions"
+                          style={{ marginTop: "0.5rem" }}
+                        >
                           <button
                             className="btn btn-sm btn-primary"
                             onClick={() =>
@@ -3325,8 +3404,7 @@ export function ProjectDetail() {
                         .filter(
                           (b) =>
                             b.kind === "local" &&
-                            b.name !==
-                              statuses[rebaseRepoId]?.currentBranch,
+                            b.name !== statuses[rebaseRepoId]?.currentBranch,
                         )
                         .map((b) => (
                           <option key={b.name} value={b.name}>
@@ -3357,13 +3435,13 @@ export function ProjectDetail() {
                     }`}
                   >
                     <span
-                      className={`badge ${
-                        rebaseResult.success ? "ok" : "err"
-                      }`}
+                      className={`badge ${rebaseResult.success ? "ok" : "err"}`}
                     >
                       {rebaseResult.status}
                     </span>
-                    <p style={{ margin: "0.4rem 0 0" }}>{rebaseResult.message}</p>
+                    <p style={{ margin: "0.4rem 0 0" }}>
+                      {rebaseResult.message}
+                    </p>
                     {rebaseResult.status === "conflict" && (
                       <>
                         {(
@@ -3396,7 +3474,10 @@ export function ProjectDetail() {
                             onToast={(msg, error) => setToast({ msg, error })}
                           />
                         ) : null}
-                        <div className="actions" style={{ marginTop: "0.5rem" }}>
+                        <div
+                          className="actions"
+                          style={{ marginTop: "0.5rem" }}
+                        >
                           <button
                             className="btn btn-sm btn-primary"
                             disabled={
@@ -3541,7 +3622,9 @@ export function ProjectDetail() {
                                       : "no upstream"}
                                 </span>
                                 {behind > 0 ? (
-                                  <span className="badge warn">pull available</span>
+                                  <span className="badge warn">
+                                    pull available
+                                  </span>
                                 ) : null}
                               </div>
                               <div className="row-actions">
@@ -3608,7 +3691,9 @@ export function ProjectDetail() {
                 <div>
                   <div className="repo-tab-section-head">
                     <h3>Remote</h3>
-                    <span className="muted">checkout creates tracking branch</span>
+                    <span className="muted">
+                      checkout creates tracking branch
+                    </span>
                   </div>
                   <div className="file-list" style={{ maxHeight: 180 }}>
                     {branchList.filter((b) => b.kind === "remote").length ===
@@ -3621,8 +3706,7 @@ export function ProjectDetail() {
                         .filter((b) => b.kind === "remote")
                         .map((b) => {
                           const localExists = branchList.some(
-                            (l) =>
-                              l.kind === "local" && l.name === b.shortName,
+                            (l) => l.kind === "local" && l.name === b.shortName,
                           );
                           const current =
                             statuses[branchRepoId]?.currentBranch ===

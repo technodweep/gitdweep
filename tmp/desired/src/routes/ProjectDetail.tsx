@@ -57,12 +57,7 @@ import {
 } from "../components/ContextMenu";
 import { Icon } from "../components/Icon";
 import { PageLoading } from "../components/PageLoading";
-import {
-  cacheWorkspaceRepoBranches,
-  cacheWorkspaceRepoStatus,
-  loadWorkspace,
-  peekWorkspace,
-} from "../lib/workspaceCache";
+import { loadWorkspace, peekWorkspace } from "../lib/workspaceCache";
 
 type BatchKind = "pull" | "fetch" | "push";
 type PullStrategy = "merge" | "ff_only";
@@ -291,11 +286,9 @@ export function ProjectDetail() {
     try {
       const st = await checkoutBranch(repoId, branch, false);
       setStatuses((prev) => ({ ...prev, [repoId]: st }));
-      cacheWorkspaceRepoStatus(projectId, st);
       try {
         const list = await listBranches(repoId);
         setBranches((prev) => ({ ...prev, [repoId]: list }));
-        cacheWorkspaceRepoBranches(projectId, repoId, list);
       } catch {
         /* keep previous branch list */
       }
@@ -1377,7 +1370,6 @@ export function ProjectDetail() {
 
   function applyRepoStatus(st: RepoStatus) {
     setStatuses((prev) => ({ ...prev, [st.repoId]: st }));
-    cacheWorkspaceRepoStatus(projectId, st);
   }
 
   async function openRebase(repoId: string, name: string, preselect?: string) {

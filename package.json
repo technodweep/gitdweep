@@ -10,8 +10,8 @@
     "build": "tsc && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
-    "tauri:dev": "WEBKIT_DISABLE_DMABUF_RENDERER=1 WEBKIT_DISABLE_COMPOSITING_MODE=1 npx tauri dev",
-    "tauri:build": "WEBKIT_DISABLE_DMABUF_RENDERER=1 WEBKIT_DISABLE_COMPOSITING_MODE=1 npx tauri build",
+    "tauri:dev": "tauri dev",
+    "tauri:build": "tauri build",
     "check": "cargo check --manifest-path src-tauri/Cargo.toml && npx tsc --noEmit"
   },
   "dependencies": {

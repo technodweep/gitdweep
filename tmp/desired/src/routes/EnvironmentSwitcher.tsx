@@ -69,6 +69,9 @@ export function EnvironmentSwitcher() {
   const [running, setRunning] = useState(false);
   const [initialLoading, setInitialLoading] = useState(!initialWorkspace);
   const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewEnvId, setPreviewEnvId] = useState<string | null>(
+    initialPreview ? initialEnvironmentId : null,
+  );
   const [stashIfDirty, setStashIfDirty] = useState(false);
   const [fetchFirst, setFetchFirst] = useState(false);
   const [popStashAfter, setPopStashAfter] = useState(false);
@@ -131,6 +134,7 @@ export function EnvironmentSwitcher() {
   useLayoutEffect(() => {
     if (!envId) {
       setPreview({});
+      setPreviewEnvId(null);
       setPreviewLoading(false);
       return;
     }
@@ -139,6 +143,7 @@ export function EnvironmentSwitcher() {
     const cached = peekSwitchPreview(projectId, envId, options);
     if (cached) {
       setPreview(cached);
+      setPreviewEnvId(envId);
       setPreviewLoading(false);
       return;
     }
@@ -152,6 +157,7 @@ export function EnvironmentSwitcher() {
         if (!cancelled) setToast({ msg: String(err), error: true });
       } finally {
         if (!cancelled) {
+          setPreviewEnvId(envId);
           setPreviewLoading(false);
         }
       }
@@ -221,7 +227,8 @@ export function EnvironmentSwitcher() {
   }
 
   const enabledRepos = detail?.repos.filter((r) => r.enabled) ?? [];
-  const contentLoading = initialLoading;
+  const contentLoading =
+    initialLoading || (envId !== null && previewEnvId !== envId);
 
   return (
     <>
