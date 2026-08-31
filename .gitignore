@@ -12,6 +12,9 @@ dist
 dist-ssr
 *.local
 
+# Generated diagnostics and browser profiles
+/tmp/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
