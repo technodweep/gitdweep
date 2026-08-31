@@ -1,0 +1,53 @@
+.page-loading {
+  display: grid;
+  gap: 0.75rem;
+  min-height: 280px;
+}
+
+.page-loading-label {
+  color: var(--text-muted);
+  font-size: 0.82rem;
+}
+
+.page-loading-row {
+  display: grid;
+  align-content: center;
+  gap: 0.65rem;
+  min-height: 96px;
+  padding: 1rem 1.1rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-elevated);
+}
+
+.page-loading-line {
+  display: block;
+  width: min(70%, 520px);
+  height: 9px;
+  border-radius: 999px;
+  background: var(--bg-elevated-2);
+}
+
+.page-loading-line-title {
+  width: min(34%, 260px);
+  height: 13px;
+}
+
+.page-loading-line-short {
+  width: min(48%, 360px);
+}
+
+/* WebView2 can invalidate large compositor surfaces when sticky blur layers
+   are mounted or removed during route changes. Keep those layers opaque on
+   Windows; other platforms retain the translucent treatment. */
+.platform-windows .page-header,
+.platform-windows .commit-graph-header,
+.platform-windows .modal-backdrop,
+.platform-windows .toast {
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+.platform-windows .page-header {
+  background: var(--bg);
+}
