@@ -1,6 +1,137 @@
 use crate::models::RepoStatus;
+use std::cell::RefCell;
+use std::io::{BufRead, BufReader, Read};
 use std::path::Path;
-use std::process::Command;
+use std::process::{Command, Output, Stdio};
+use std::sync::Arc;
+
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitLogEntry {
+    pub repo_path: String,
+    pub kind: String,
+    pub text: String,
+}
+
+type LogSink = Arc<dyn Fn(GitLogEntry) + Send + Sync>;
+
+thread_local! {
+    static GIT_LOG: RefCell<Option<LogSink>> = RefCell::new(None);
+}
+
+/// Keep command logging local to one synchronous operation, including its
+/// nested Git calls. Dropping the scope restores the previous logger.
+pub struct GitLogScope(Option<LogSink>);
+
+impl GitLogScope {
+    pub fn new(sink: impl Fn(GitLogEntry) + Send + Sync + 'static) -> Self {
+        Self(GIT_LOG.with(|log| log.replace(Some(Arc::new(sink)))))
+    }
+}
+
+impl Drop for GitLogScope {
+    fn drop(&mut self) {
+        GIT_LOG.with(|log| log.replace(self.0.take()));
+    }
+}
+
+fn log_entry(sink: &LogSink, repo: &Path, kind: &str, text: String) {
+    sink(GitLogEntry {
+        repo_path: repo.display().to_string(),
+        kind: kind.into(),
+        text,
+    });
+}
+
+fn read_git_stream(
+    stream: impl Read,
+    sink: &LogSink,
+    repo: &Path,
+    kind: &str,
+) -> std::io::Result<Vec<u8>> {
+    let mut reader = BufReader::new(stream);
+    let mut output = Vec::new();
+    let mut line = Vec::new();
+    loop {
+        line.clear();
+        if reader.read_until(b'\n', &mut line)? == 0 {
+            break;
+        }
+        output.extend_from_slice(&line);
+        log_entry(
+            sink,
+            repo,
+            kind,
+            String::from_utf8_lossy(&line).trim_end().into(),
+        );
+    }
+    Ok(output)
+}
+
+fn git_output(repo: &Path, args: &[&str]) -> Result<Output, String> {
+    let sink = GIT_LOG.with(|log| log.borrow().clone());
+    let mut command = git_command();
+    command.args(args).current_dir(repo);
+    let Some(sink) = sink else {
+        return command
+            .output()
+            .map_err(|e| format!("Failed to run git: {e}"));
+    };
+    let rendered = args
+        .iter()
+        .map(|arg| {
+            if arg
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || "-_/.:@{}=".contains(c))
+            {
+                arg.to_string()
+            } else {
+                format!("'{}'", arg.replace('\'', "'\\''"))
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ");
+    log_entry(&sink, repo, "command", format!("git {rendered}"));
+    let result = (|| -> Result<Output, String> {
+        let mut child = command
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| format!("Failed to run git: {e}"))?;
+        let stdout = child.stdout.take().expect("piped stdout");
+        let stderr = child.stderr.take().expect("piped stderr");
+        // Drain both pipes concurrently so a verbose process cannot deadlock.
+        std::thread::scope(|scope| {
+            let out = scope.spawn(|| read_git_stream(stdout, &sink, repo, "stdout"));
+            let err = scope.spawn(|| read_git_stream(stderr, &sink, repo, "stderr"));
+            let status = child.wait();
+            let stdout = out
+                .join()
+                .map_err(|_| "Git stdout reader failed".to_string())?
+                .map_err(|e| e.to_string())?;
+            let stderr = err
+                .join()
+                .map_err(|_| "Git stderr reader failed".to_string())?
+                .map_err(|e| e.to_string())?;
+            Ok(Output {
+                status: status.map_err(|e| e.to_string())?,
+                stdout,
+                stderr,
+            })
+        })
+    })();
+    match &result {
+        Ok(output) => log_entry(
+            &sink,
+            repo,
+            "exit",
+            format!("Exit status: {}", output.status),
+        ),
+        Err(error) => log_entry(&sink, repo, "error", error.clone()),
+    }
+    result
+}
 
 /// Build every Git child process with the platform-specific window behavior
 /// expected by a desktop GUI application.
@@ -22,11 +153,7 @@ fn git_command() -> Command {
 }
 
 fn run_git(repo: &Path, args: &[&str]) -> Result<String, String> {
-    let output = git_command()
-        .args(args)
-        .current_dir(repo)
-        .output()
-        .map_err(|e| format!("Failed to run git: {e}"))?;
+    let output = git_output(repo, args)?;
 
     if output.status.success() {
         Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
@@ -45,11 +172,7 @@ fn run_git(repo: &Path, args: &[&str]) -> Result<String, String> {
 
 /// Like run_git but includes stderr on success (for pull/fetch/push messages).
 fn run_git_with_stderr(repo: &Path, args: &[&str]) -> Result<String, String> {
-    let output = git_command()
-        .args(args)
-        .current_dir(repo)
-        .output()
-        .map_err(|e| format!("Failed to run git: {e}"))?;
+    let output = git_output(repo, args)?;
 
     let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
     let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
@@ -1668,6 +1791,67 @@ mod pull_tests {
         configure_user(&peer);
 
         TestRepos { root, local, peer }
+    }
+
+    #[test]
+    fn streams_git_output_before_the_command_finishes() {
+        let repos = setup_repos();
+        let local = repos.local.clone();
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            let _log = GitLogScope::new(move |entry| {
+                let _ = sender.send(entry);
+            });
+            git_output(&local, &[
+                "-c",
+                "alias.log-test=!printf 'ready\\n'; printf 'diagnostic\\n' >&2; i=0; while test ! -f release && test $i -lt 100; do sleep 0.05; i=$((i+1)); done; test -f release",
+                "log-test",
+            ])
+        });
+        let command = receiver
+            .recv_timeout(std::time::Duration::from_secs(3))
+            .unwrap();
+        assert_eq!(command.kind, "command");
+        assert_eq!(command.repo_path, repos.local.display().to_string());
+        let first = receiver
+            .recv_timeout(std::time::Duration::from_secs(3))
+            .unwrap();
+        let second = receiver
+            .recv_timeout(std::time::Duration::from_secs(3))
+            .unwrap();
+        assert!([&first, &second]
+            .iter()
+            .any(|e| e.kind == "stdout" && e.text == "ready"));
+        assert!([&first, &second]
+            .iter()
+            .any(|e| e.kind == "stderr" && e.text == "diagnostic"));
+        // Release the process only after both streams have reached the logger.
+        fs::write(repos.local.join("release"), "").unwrap();
+        let output = worker.join().unwrap().unwrap();
+        assert!(output.status.success());
+        assert_eq!(output.stdout, b"ready\n");
+        assert_eq!(output.stderr, b"diagnostic\n");
+        assert_eq!(receiver.recv().unwrap().kind, "exit");
+    }
+
+    #[test]
+    fn logging_preserves_errors_and_stops_at_scope_end() {
+        let repos = setup_repos();
+        let (sender, receiver) = std::sync::mpsc::channel();
+        {
+            let _log = GitLogScope::new(move |entry| {
+                let _ = sender.send(entry);
+            });
+            let error = run_git_with_stderr(&repos.local, &["not-a-git-command"]).unwrap_err();
+            assert!(error.contains("not-a-git-command"));
+        }
+        run_git(&repos.local, &["status", "--short"]).unwrap();
+        let entries: Vec<_> = receiver.try_iter().collect();
+        assert_eq!(entries.iter().filter(|e| e.kind == "command").count(), 1);
+        assert!(entries
+            .iter()
+            .any(|e| e.kind == "stderr" && e.text.contains("not-a-git-command")));
+        assert_eq!(entries.last().unwrap().kind, "exit");
     }
 
     #[test]

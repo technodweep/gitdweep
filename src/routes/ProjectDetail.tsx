@@ -1,4 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
+import { type Channel } from "@tauri-apps/api/core";
+import { GitCommandLog } from "../components/GitCommandLog";
+import { useGitOperationLog, type GitLogEntry } from "../lib/gitOperationLog";
 import { Link, useParams } from "react-router-dom";
 import {
   addRepo,
@@ -93,6 +96,8 @@ export function ProjectDetail() {
     kind: BatchKind;
     items: PullResult[];
   } | null>(null);
+
+  const { log: gitLog, runLogged, closeLog } = useGitOperationLog();
 
   // Guided single-repository pull
   const [pullRepoId, setPullRepoId] = useState<string | null>(null);
@@ -366,7 +371,7 @@ export function ProjectDetail() {
   async function runBatch(
     kind: BatchKind,
     confirmText: string,
-    fn: (id: string) => Promise<PullResult[]>,
+    fn: (id: string, log?: Channel<GitLogEntry>) => Promise<PullResult[]>,
   ) {
     const enabled = detail?.repos.filter((r) => r.enabled) ?? [];
     if (enabled.length === 0) {
@@ -379,7 +384,14 @@ export function ProjectDetail() {
     setBatchBusy(kind);
     setBatchResults(null);
     try {
-      const res = await fn(projectId);
+      const res = kind === "push" ? await fn(projectId) : await runLogged(
+        kind === "pull" ? "Pull all" : "Fetch all",
+        (channel) => fn(projectId, channel),
+        (items) => ({
+          text: items.map((r) => `${r.repoName}: ${r.success ? "OK" : "FAILED"} — ${r.message}`).join("\n"),
+          failed: items.some((r) => !r.success),
+        }),
+      );
       setBatchResults({ kind, items: res });
       const ok = res.filter((r) => r.success).length;
       const fail = res.length - ok;
@@ -398,11 +410,15 @@ export function ProjectDetail() {
   async function runRepoOp(
     repoId: string,
     label: string,
-    fn: (id: string) => Promise<PullResult>,
+    fn: (id: string, log?: Channel<GitLogEntry>) => Promise<PullResult>,
   ) {
     setRowBusy(repoId);
     try {
-      const res = await fn(repoId);
+      const res = label === "Fetch" ? await runLogged(
+        `Fetch — ${detail?.repos.find((r) => r.id === repoId)?.name ?? repoId}`,
+        (channel) => fn(repoId, channel),
+        (result) => ({ text: result.message, failed: !result.success }),
+      ) : await fn(repoId);
       setToast({
         msg: `${label} ${res.repoName}: ${res.message}`,
         error: !res.success,
@@ -425,7 +441,11 @@ export function ProjectDetail() {
     setPullBusy(true);
     setRowBusy(repoId);
     try {
-      const preview = await previewPull(repoId);
+      const preview = await runLogged(
+        `Pull — ${name}`,
+        (channel) => previewPull(repoId, channel),
+        (result) => ({ text: `Preview ready: ${result.message}` }),
+      );
       setPullPreview(preview);
       await refresh();
     } catch (e) {
@@ -447,7 +467,12 @@ export function ProjectDetail() {
     setPullResult(null);
     setPullError(null);
     try {
-      const result = await pullRepo(pullRepoId, pullStrategy);
+      const result = await runLogged(
+        `Pull — ${pullRepoName}`,
+        (channel) => pullRepo(pullRepoId, pullStrategy, channel),
+        (outcome) => ({ text: outcome.message, failed: !outcome.success }),
+        true,
+      );
       setPullResult(result);
       setToast({ msg: result.message, error: !result.success });
       await refresh();
@@ -2743,6 +2768,10 @@ export function ProjectDetail() {
         </div>
       )}
 
+      {gitLog && !pullRepoId && (
+        <GitCommandLog log={gitLog} onClose={closeLog} />
+      )}
+
       {/* Guided pull modal */}
       {pullRepoId && (
         <div
@@ -2771,6 +2800,8 @@ export function ProjectDetail() {
                 <p style={{ marginBottom: 0 }}>{pullError}</p>
               </div>
             ) : null}
+
+            {gitLog && <GitCommandLog log={gitLog} onClose={closeLog} embedded />}
 
             {pullPreview ? (
               <div className="form-grid">

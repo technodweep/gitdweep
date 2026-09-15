@@ -3297,3 +3297,58 @@ tbody tr:hover {
     transition-duration: 0.01ms !important;
   }
 }
+
+
+/* Live Git output for pull and fetch operations. */
+.git-command-log {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.git-command-log.docked {
+  position: fixed;
+  bottom: 1rem;
+  left: 1rem;
+  right: 1rem;
+  z-index: 65;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
+}
+
+.git-command-log.embedded {
+  margin: 1rem 0;
+}
+
+.git-command-log-header {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+  padding: 0.65rem 0.85rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.git-command-log-header strong {
+  flex: 1;
+  overflow-wrap: anywhere;
+}
+
+.git-command-log-output {
+  height: min(28vh, 280px);
+  min-height: 100px;
+  overflow: auto;
+  padding: 0.75rem 1rem;
+  background: #0d1014;
+  color: #cbd5e1;
+  font-size: 0.78rem;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.git-command-log-entry.command { color: #93c5fd; margin-top: 0.4rem; }
+.git-command-log-entry.error { color: #fca5a5; }
+.git-command-log-entry.exit { color: #94a3b8; }
+.git-command-log-entry.summary { color: #86efac; margin-top: 0.5rem; }
+.git-command-log-repo { color: #94a3b8; margin: 0.4rem 0; }

@@ -1,4 +1,5 @@
-import { invoke } from "@tauri-apps/api/core";
+import { invoke, Channel } from "@tauri-apps/api/core";
+import type { GitLogEntry } from "./gitOperationLog";
 import type {
   BranchInfo,
   ChangedFile,
@@ -143,35 +144,48 @@ export async function previewSwitchEnvironment(
   return invoke("preview_switch_environment", { projectId, envId, options });
 }
 
-export async function pullAll(projectId: string): Promise<PullResult[]> {
-  return invoke("pull_all", { projectId });
+export async function pullAll(
+  projectId: string,
+  log: Channel<GitLogEntry> = new Channel<GitLogEntry>(),
+): Promise<PullResult[]> {
+  return invoke("pull_all", { projectId, log });
 }
 
-export async function fetchAllRepos(projectId: string): Promise<PullResult[]> {
-  return invoke("fetch_all_repos", { projectId });
+export async function fetchAllRepos(
+  projectId: string,
+  log: Channel<GitLogEntry> = new Channel<GitLogEntry>(),
+): Promise<PullResult[]> {
+  return invoke("fetch_all_repos", { projectId, log });
 }
 
 export async function pushAll(projectId: string): Promise<PullResult[]> {
   return invoke("push_all", { projectId });
 }
 
-export async function previewPull(repoId: string): Promise<PullPreview> {
-  return invoke("preview_pull", { repoId });
+export async function previewPull(
+  repoId: string,
+  log: Channel<GitLogEntry> = new Channel<GitLogEntry>(),
+): Promise<PullPreview> {
+  return invoke("preview_pull", { repoId, log });
 }
 
 export async function pullRepo(
   repoId: string,
   strategy: "merge" | "ff_only" = "merge",
+  log: Channel<GitLogEntry> = new Channel<GitLogEntry>(),
 ): Promise<PullResult> {
-  return invoke("pull_repo", { repoId, strategy });
+  return invoke("pull_repo", { repoId, strategy, log });
 }
 
 export async function pushRepo(repoId: string): Promise<PullResult> {
   return invoke("push_repo", { repoId });
 }
 
-export async function fetchRepo(repoId: string): Promise<PullResult> {
-  return invoke("fetch_repo", { repoId });
+export async function fetchRepo(
+  repoId: string,
+  log: Channel<GitLogEntry> = new Channel<GitLogEntry>(),
+): Promise<PullResult> {
+  return invoke("fetch_repo", { repoId, log });
 }
 
 export async function getChangeSummary(repoId: string): Promise<string> {

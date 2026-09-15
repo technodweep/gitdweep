@@ -444,12 +444,16 @@ fn run_batch_git_op(
 }
 
 /// Pull --ff-only for every enabled repo in the project.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn pull_all(
     app: AppHandle,
     state: State<'_, AppState>,
     project_id: String,
+    log: tauri::ipc::Channel<git::GitLogEntry>,
 ) -> Result<Vec<PullResult>, String> {
+    let _log_scope = git::GitLogScope::new(move |entry| {
+        let _ = log.send(entry);
+    });
     run_batch_git_op(
         &app,
         &state,
@@ -461,12 +465,16 @@ pub fn pull_all(
 }
 
 /// Fetch --all --prune for every enabled repo.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn fetch_all_repos(
     app: AppHandle,
     state: State<'_, AppState>,
     project_id: String,
+    log: tauri::ipc::Channel<git::GitLogEntry>,
 ) -> Result<Vec<PullResult>, String> {
+    let _log_scope = git::GitLogScope::new(move |entry| {
+        let _ = log.send(entry);
+    });
     run_batch_git_op(
         &app,
         &state,
@@ -559,11 +567,15 @@ pub fn preview_switch_environment(
     Ok(items)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn preview_pull(
     state: State<'_, AppState>,
     repo_id: String,
+    log: tauri::ipc::Channel<git::GitLogEntry>,
 ) -> Result<crate::models::PullPreview, String> {
+    let _log_scope = git::GitLogScope::new(move |entry| {
+        let _ = log.send(entry);
+    });
     let repo = state.db.get_repo(&repo_id)?;
     let plan = git::preview_pull(&repo.path)?;
     Ok(crate::models::PullPreview {
@@ -580,12 +592,16 @@ pub fn preview_pull(
     })
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn pull_repo(
     state: State<'_, AppState>,
     repo_id: String,
     strategy: Option<String>,
+    log: tauri::ipc::Channel<git::GitLogEntry>,
 ) -> Result<PullResult, String> {
+    let _log_scope = git::GitLogScope::new(move |entry| {
+        let _ = log.send(entry);
+    });
     let repo = state.db.get_repo(&repo_id)?;
     let allow_merge = match strategy.as_deref().unwrap_or("merge") {
         "merge" => true,
@@ -642,8 +658,15 @@ pub fn push_repo(state: State<'_, AppState>, repo_id: String) -> Result<PullResu
     }
 }
 
-#[tauri::command]
-pub fn fetch_repo(state: State<'_, AppState>, repo_id: String) -> Result<PullResult, String> {
+#[tauri::command(async)]
+pub fn fetch_repo(
+    state: State<'_, AppState>,
+    repo_id: String,
+    log: tauri::ipc::Channel<git::GitLogEntry>,
+) -> Result<PullResult, String> {
+    let _log_scope = git::GitLogScope::new(move |entry| {
+        let _ = log.send(entry);
+    });
     let repo = state.db.get_repo(&repo_id)?;
     match git::fetch_all(&repo.path) {
         Ok(msg) => Ok(PullResult {
