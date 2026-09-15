@@ -498,13 +498,12 @@ pub fn fetch_all(path: &str) -> Result<String, String> {
     run_git_with_stderr(p, &["fetch", "--all", "--prune"])
 }
 
-/// Conservative pull used by the multi-repository batch action.
+/// Fast-forward-only pull used by the multi-repository batch action.
 pub fn pull_ff_only(path: &str) -> Result<String, String> {
     let p = Path::new(path);
-    if is_dirty(path)? {
-        return Err("Working tree has uncommitted changes".into());
-    }
-    run_git_with_stderr(p, &["pull", "--ff-only"])
+    // Let Git reject updates that would overwrite local edits. Explicitly
+    // avoid rebase/autostash settings changing this fast-forward-only behavior.
+    run_git_with_stderr(p, &["pull", "--ff-only", "--no-rebase", "--no-autostash"])
 }
 
 #[derive(Debug, Clone)]
@@ -1873,48 +1872,111 @@ mod pull_tests {
 
     #[test]
     fn fast_forward_preserves_unrelated_local_changes() {
-        for staged in [false, true] {
-            let repos = setup_repos();
-            fs::write(repos.local.join("base.txt"), "local edits\n").unwrap();
-            if staged {
-                git_ok(&repos.local, &["add", "base.txt"]);
-            }
-            fs::write(repos.local.join("untracked.txt"), "local file\n").unwrap();
-            let before_status = git_ok(&repos.local, &["status", "--porcelain"]);
-            commit_file(&repos.peer, "remote.txt", "remote\n", "remote change");
-            git_ok(&repos.peer, &["push"]);
+        for batch in [false, true] {
+            for staged in [false, true] {
+                let repos = setup_repos();
+                if batch {
+                    git_ok(&repos.local, &["config", "pull.rebase", "true"]);
+                    git_ok(&repos.local, &["config", "merge.autoStash", "true"]);
+                }
+                fs::write(repos.local.join("base.txt"), "local edits\n").unwrap();
+                if staged {
+                    git_ok(&repos.local, &["add", "base.txt"]);
+                }
+                fs::write(repos.local.join("untracked.txt"), "local file\n").unwrap();
+                let before_status = git_ok(&repos.local, &["status", "--porcelain"]);
+                commit_file(&repos.peer, "remote.txt", "remote\n", "remote change");
+                git_ok(&repos.peer, &["push"]);
 
-            let path = repos.local.to_str().unwrap();
-            assert_eq!(preview_pull(path).unwrap().action, "fast_forward");
-            let outcome = pull_with_strategy(path, true).unwrap();
-            assert!(outcome.success);
-            assert_eq!(outcome.status, "fast_forwarded");
-            assert_eq!(fs::read_to_string(repos.local.join("remote.txt")).unwrap(), "remote\n");
-            assert_eq!(fs::read_to_string(repos.local.join("base.txt")).unwrap(), "local edits\n");
-            assert_eq!(fs::read_to_string(repos.local.join("untracked.txt")).unwrap(), "local file\n");
-            assert_eq!(git_ok(&repos.local, &["status", "--porcelain"]), before_status);
+                let path = repos.local.to_str().unwrap();
+                assert_eq!(preview_pull(path).unwrap().action, "fast_forward");
+                if batch {
+                    pull_ff_only(path).unwrap();
+                } else {
+                    let outcome = pull_with_strategy(path, true).unwrap();
+                    assert!(outcome.success);
+                    assert_eq!(outcome.status, "fast_forwarded");
+                }
+                assert_eq!(
+                    fs::read_to_string(repos.local.join("remote.txt")).unwrap(),
+                    "remote\n"
+                );
+                assert_eq!(
+                    fs::read_to_string(repos.local.join("base.txt")).unwrap(),
+                    "local edits\n"
+                );
+                assert_eq!(
+                    fs::read_to_string(repos.local.join("untracked.txt")).unwrap(),
+                    "local file\n"
+                );
+                assert_eq!(
+                    git_ok(&repos.local, &["status", "--porcelain"]),
+                    before_status
+                );
+            }
         }
     }
 
     #[test]
     fn pull_refuses_to_overwrite_local_changes() {
-        for (name, staged) in [("base.txt", false), ("base.txt", true), ("new.txt", false)] {
-            let repos = setup_repos();
-            fs::write(repos.local.join(name), "local edits\n").unwrap();
-            if staged {
-                git_ok(&repos.local, &["add", name]);
-            }
-            let before = git_ok(&repos.local, &["rev-parse", "HEAD"]);
-            let before_status = git_ok(&repos.local, &["status", "--porcelain"]);
-            commit_file(&repos.peer, name, "remote\n", "remote change");
-            git_ok(&repos.peer, &["push"]);
+        for batch in [false, true] {
+            for (name, staged) in [("base.txt", false), ("base.txt", true), ("new.txt", false)] {
+                let repos = setup_repos();
+                if batch {
+                    git_ok(&repos.local, &["config", "pull.rebase", "true"]);
+                    git_ok(&repos.local, &["config", "merge.autoStash", "true"]);
+                }
+                fs::write(repos.local.join(name), "local edits\n").unwrap();
+                if staged {
+                    git_ok(&repos.local, &["add", name]);
+                }
+                let before = git_ok(&repos.local, &["rev-parse", "HEAD"]);
+                let before_status = git_ok(&repos.local, &["status", "--porcelain"]);
+                commit_file(&repos.peer, name, "remote\n", "remote change");
+                git_ok(&repos.peer, &["push"]);
 
-            let error = pull_with_strategy(repos.local.to_str().unwrap(), true).unwrap_err();
-            assert!(error.contains("would be overwritten"), "{error}");
-            assert_eq!(git_ok(&repos.local, &["rev-parse", "HEAD"]), before);
-            assert_eq!(fs::read_to_string(repos.local.join(name)).unwrap(), "local edits\n");
-            assert_eq!(git_ok(&repos.local, &["status", "--porcelain"]), before_status);
+                let error = if batch {
+                    pull_ff_only(repos.local.to_str().unwrap()).unwrap_err()
+                } else {
+                    pull_with_strategy(repos.local.to_str().unwrap(), true).unwrap_err()
+                };
+                assert!(error.contains("would be overwritten"), "{error}");
+                assert_eq!(git_ok(&repos.local, &["rev-parse", "HEAD"]), before);
+                assert_eq!(
+                    fs::read_to_string(repos.local.join(name)).unwrap(),
+                    "local edits\n"
+                );
+                assert_eq!(
+                    git_ok(&repos.local, &["status", "--porcelain"]),
+                    before_status
+                );
+            }
         }
+    }
+
+    #[test]
+    fn batch_pull_accepts_up_to_date_dirty_repo() {
+        let repos = setup_repos();
+        fs::write(repos.local.join("base.txt"), "local edits\n").unwrap();
+        let before = git_ok(&repos.local, &["rev-parse", "HEAD"]);
+        pull_ff_only(repos.local.to_str().unwrap()).unwrap();
+        assert_eq!(git_ok(&repos.local, &["rev-parse", "HEAD"]), before);
+        assert_eq!(
+            fs::read_to_string(repos.local.join("base.txt")).unwrap(),
+            "local edits\n"
+        );
+    }
+
+    #[test]
+    fn batch_pull_still_refuses_divergence() {
+        let repos = setup_repos();
+        commit_file(&repos.local, "local.txt", "local\n", "local change");
+        commit_file(&repos.peer, "remote.txt", "remote\n", "remote change");
+        git_ok(&repos.peer, &["push"]);
+        let before = git_ok(&repos.local, &["rev-parse", "HEAD"]);
+        assert!(pull_ff_only(repos.local.to_str().unwrap()).is_err());
+        assert_eq!(git_ok(&repos.local, &["rev-parse", "HEAD"]), before);
+        assert!(run_git(&repos.local, &["rev-parse", "-q", "--verify", "MERGE_HEAD"]).is_err());
     }
 
     #[test]
